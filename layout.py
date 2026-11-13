@@ -45,8 +45,11 @@ def head(title: str, description: str, path: str = '/') -> str:
 
 
 def topbar(active: str = '') -> str:
+    # The class attribute is built outside the f-string: Python 3.10 (the VPS)
+    # rejects a backslash inside an f-string expression.
+    cls = ' class="on"'
     items = ''.join(
-        f'<a href="{href}"{" class=\"on\"" if href == active else ""}>{label}</a>'
+        '<a href="%s"%s>%s</a>' % (href, cls if href == active else '', label)
         for href, label, _ in NAV
     )
     return f'''<header class="topbar">
