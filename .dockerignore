@@ -1,0 +1,14 @@
+.wallet.json
+.wallet.backup.json
+*.backup.json
+log.db
+*.db
+server.log
+*.log
+__pycache__
+*.pyc
+.venv
+venv
+shots/
+tmp*.js
+.git

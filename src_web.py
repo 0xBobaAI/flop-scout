@@ -1,0 +1,409 @@
+"""Web + FLOP live sources.
+Each source: async fn(client, query, n, keys) -> list[{title, url, snippet}]
+"""
+import asyncio
+import os
+import re
+import time
+
+# Optional deep-read backend. Point SCOUT_URL at your own Scout reader deployment
+# to enable the `web_read` source; leave unset and it degrades to search snippets.
+SCOUT = os.getenv('SCOUT_URL', '').rstrip('/')
+EXPLORER = 'https://explorer.devnet.flop.network/api'
+UA = {'User-Agent': 'flop-scout/0.5'}
+_tag = re.compile(r'<[^>]+>')
+
+STOP = set('''what which who whom whose when where why how is are was were be been the a an of in on
+for to and or with about current currently price prices situation latest new news tell me give show
+explain does do did can could should would will
+что как какой какая какие какое кто где когда почему зачем сейчас текущая текущий цена цены курс
+про о об и или в на по для расскажи покажи объясни есть ли это vs versus compare сравни'''.split())
+
+_page_cache: dict = {}   # url -> (ts, result)
+_PAGE_TTL = 300          # 5 min page cache
+
+
+def keywords(q: str, maxw: int = 5) -> str:
+    words = [w for w in re.findall(r"[\w$.-]+", q)
+             if w.lower().strip('?.!,') not in STOP and len(w) > 1]
+    return ' '.join(words[:maxw]) or q
+
+
+def clean(s, n: int = 1200) -> str:
+    return _tag.sub('', s or '').strip()[:n]
+
+
+# ── Web search ────────────────────────────────────────────────────────────────
+
+async def keenable(c, q, n, keys):
+    """Public web index — free, no key required. Primary source for open questions."""
+    if keys.get('keenable'):
+        r = await c.post('https://api.keenable.ai/v1/search',
+                         headers={'X-API-Key': keys['keenable']},
+                         json={'query': q, 'max_results': n})
+    else:
+        r = await c.post('https://api.keenable.ai/v1/search/public',
+                         headers={'X-Keenable-Title': 'flop-scout'},
+                         json={'query': q, 'max_results': n})
+    r.raise_for_status()
+    return [{'title': x.get('title', ''), 'url': x.get('url', ''),
+             'snippet': clean(x.get('snippet') or x.get('description'))}
+            for x in r.json().get('results', [])]
+
+
+async def exa(c, q, n, keys):
+    """Neural web search — requires caller's Exa key (Builder tier)."""
+    if not keys.get('exa'):
+        raise RuntimeError('Exa key required')
+    r = await c.post('https://api.exa.ai/search',
+                     headers={'x-api-key': keys['exa']},
+                     json={'query': q, 'numResults': n, 'contents': {'highlights': True}})
+    r.raise_for_status()
+    return [{'title': x.get('title') or '', 'url': x.get('url', ''),
+             'snippet': clean(' … '.join(x.get('highlights') or []) or x.get('text', ''))}
+            for x in r.json().get('results', [])]
+
+
+async def web_read(c, q, n, keys):
+    """Read and extract relevant passages from the top Keenable result pages.
+
+    Needs an extraction backend (set SCOUT_URL to your own reader). Without it
+    this source returns nothing and the registry hides it from presets.
+    High value: gives actual page content instead of snippets.
+    """
+    if not SCOUT:
+        return []
+    # First get URLs from keenable
+    try:
+        search_hits = await keenable(c, q, min(n, 3), keys)
+    except Exception:
+        return []
+    if not search_hits:
+        return []
+
+    async def extract(hit):
+        url = hit['url']
+        if url in _page_cache and time.time() - _page_cache[url][0] < _PAGE_TTL:
+            return _page_cache[url][1]
+        try:
+            r = await c.post(f'{SCOUT}/api/web/extract',
+                             json={'url': url, 'query': q, 'maxChars': 1800},
+                             timeout=20)
+            if not r.is_success:
+                return None
+            j = r.json()
+            # API returns 'text' (full page) and optional 'extraction' with matched passages
+            extraction = j.get('extraction') or {}
+            matches = extraction.get('matches') or extraction.get('passages') or []
+            if matches:
+                text = ' … '.join(m.get('text', '') or m.get('passage', '') for m in matches[:3])
+            else:
+                text = j.get('text', '')[:900]
+            result = {'title': j.get('title') or hit['title'], 'url': url,
+                      'snippet': clean(text, 1000)}
+            _page_cache[url] = (time.time(), result)
+            return result
+        except Exception:
+            return None
+
+    results = await asyncio.gather(*[extract(h) for h in search_hits])
+    return [r for r in results if r and r.get('snippet')]
+
+
+# ── FLOP network — the core value prop ───────────────────────────────────────
+
+async def flop_live(c, q, n, keys):
+    """Live FLOP network state: models, priced miners, capacity, chain health, faucet.
+    This is unique real-time data no browser search can replicate instantly.
+    """
+    out = []
+    now = time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())
+
+    # Gateway: models + miner count
+    mods_r, health_r, faucet_r = await asyncio.gather(
+        c.get('https://api.flop.network/v1/models'),
+        c.get(f'{EXPLORER}/health'),
+        c.get('https://faucet.flop.network/limits'),
+        return_exceptions=True,
+    )
+    if not isinstance(mods_r, Exception) and mods_r.is_success:
+        for x in mods_r.json().get('data', []):
+            xf = x.get('x-flop', {})
+            ps = xf.get('price_sources', [])
+            countries = ', '.join({d['country_code'] for d in xf.get('datacenters', [])})
+            out.append({
+                'title': f"FLOP inference: {x.get('name') or x['id']}",
+                'url': 'https://api.flop.network/v1/models',
+                'snippet': (f"Model {x['id']} · price {x['pricing']['prompt']} FLOP/token (devnet-nominal) · "
+                            f"capacity {xf.get('capacity_tpm'):,} tok/min · {len(ps)} priced miners · "
+                            f"countries: {countries} · as of {now}")
+            })
+
+    if not isinstance(health_r, Exception) and health_r.is_success:
+        j = health_r.json()
+        out.append({
+            'title': 'FLOP devnet: chain health',
+            'url': 'https://explorer.devnet.flop.network',
+            'snippet': (f"Status {j.get('status')}, phase {j.get('phase')}, "
+                        f"block {j.get('indexedHead')}, finality lag {j.get('headLag')} blocks · {now}")
+        })
+
+    if not isinstance(faucet_r, Exception) and faucet_r.is_success:
+        j = faucet_r.json()
+        fc, sp = j.get('faucet', {}), j.get('sponsor', {})
+        dc = fc.get('dailyCap', {})
+        out.append({
+            'title': 'FLOP devnet: faucet & sponsorship limits',
+            'url': 'https://faucet.flop.network/limits',
+            'snippet': (f"Faucet {fc.get('status')} · daily cap {dc.get('limitFlop')} FLOP, "
+                        f"used {dc.get('usedFlop')}, remaining {dc.get('remainingFlop')} · "
+                        f"miner sponsorship: {sp.get('miner', {}).get('status')} · "
+                        f"validator sponsorship: {sp.get('validator', {}).get('status')} · {now}")
+        })
+    return out[:n]
+
+
+async def flop_miners_live(c, q, n, keys):
+    """Live miner performance from the FLOP explorer: settlement rates, GPU, stake.
+    Unique signal for 'which miners are reliable?' — not available anywhere else.
+    """
+    kw = keywords(q)
+
+    # Fetch top priced miners from gateway
+    mods_r = await c.get('https://api.flop.network/v1/models', timeout=15)
+    if not mods_r.is_success:
+        return []
+    priced = []
+    for x in mods_r.json().get('data', []):
+        for ps in x.get('x-flop', {}).get('price_sources', []):
+            addr = ps.get('miner_address')
+            if addr and addr not in [p['address'] for p in priced]:
+                priced.append({'address': addr, 'price': ps.get('flop_per_gn'), 'model': x['id']})
+
+    # Fetch details for top miners in parallel (limit 6 to stay fast)
+    sample = priced[:min(6, n)]
+
+    async def detail(pm):
+        try:
+            r = await c.get(f'{EXPLORER}/miners/{pm["address"]}', timeout=15)
+            if not r.is_success:
+                return None
+            d = r.json()
+            w = d.get('work') or {}
+            cal = d.get('calibration') or {}
+            gpus = (d.get('declaredGpuInventory') or {}).get('gpus') or []
+            gpu_str = ', '.join(f"{g.get('name', '?')} ×{g.get('count', 1)}" for g in gpus[:2]) or 'GPU unknown'
+            settled = w.get('settled', 0)
+            rs = w.get('recentSessions') or []
+            closed = sum(1 for s in rs if s['status'] in ('settled', 'timedout'))
+            rate = round(settled / closed, 2) if closed else None
+            return {
+                'title': f"FLOP miner {pm['address'][:10]}…",
+                'url': f"https://explorer.devnet.flop.network/account/{pm['address']}",
+                'snippet': (f"GPU: {gpu_str} · calibration: {cal.get('phase', '?')} "
+                            f"({cal.get('empiricalCapGflopsPerSec') or cal.get('capGflopsPerSec', '?')} GFlop/s) · "
+                            f"settled sessions: {settled} · "
+                            f"recent settlement rate: {f'{rate:.0%}' if rate is not None else 'unknown'} · "
+                            f"price: {pm['price']} FLOP/G_n · model: {pm['model']}")
+            }
+        except Exception:
+            return None
+
+    results = await asyncio.gather(*[detail(pm) for pm in sample])
+    return [r for r in results if r]
+
+
+async def flop_network_stats(c, q, n, keys):
+    """Aggregate FLOP network statistics from the devnet explorer.
+    Good for questions about network health, total activity, validator count.
+    """
+    r = await c.get(f'{EXPLORER}/stats', timeout=15)
+    if not r.is_success:
+        return []
+    j = r.json()
+    now = time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())
+    return [{
+        'title': 'FLOP devnet: network statistics',
+        'url': 'https://explorer.devnet.flop.network',
+        'snippet': (f"Block {j.get('latestBlockNumber'):,} · TPS {j.get('tps')} · "
+                    f"registered miners: {j.get('registeredMiners')} · "
+                    f"active validators: {j.get('activeValidators')} · "
+                    f"active agents: {j.get('activeAgents'):,} · "
+                    f"total accounts: {j.get('totalAccounts'):,} · "
+                    f"HTLC sessions: {j.get('totalHTLCs'):,} (active: {j.get('activeHTLCs'):,}) · "
+                    f"24h tx volume: {j.get('txVolume24h'):,} · as of {now}")
+    }]
+
+
+# ── Dev sources ───────────────────────────────────────────────────────────────
+
+async def github(c, q, n, keys):
+    """GitHub repo search — only relevant for 'find me a library/tool' questions."""
+    kw = keywords(q)
+    h = dict(UA, Accept='application/vnd.github+json')
+    if keys.get('github'):
+        h['Authorization'] = f"Bearer {keys['github']}"
+    r = await c.get('https://api.github.com/search/repositories',
+                    params={'q': kw, 'per_page': n, 'sort': 'stars'}, headers=h)
+    r.raise_for_status()
+    return [{'title': x['full_name'], 'url': x['html_url'],
+             'snippet': (f"★{x['stargazers_count']:,} · "
+                         f"updated {x['pushed_at'][:10]} · "
+                         f"{x.get('language') or ''} · "
+                         f"{clean(x.get('description'))}")}
+            for x in r.json().get('items', [])]
+
+
+async def hackernews(c, q, n, keys):
+    """HN discussions — good for 'what do devs think about X' but noisy for factual questions."""
+    kw = keywords(q)
+    r = await c.get('https://hn.algolia.com/api/v1/search',
+                    params={'query': kw, 'hitsPerPage': n, 'tags': 'story'})
+    r.raise_for_status()
+    return [{'title': x.get('title') or '',
+             'url': x.get('url') or f"https://news.ycombinator.com/item?id={x['objectID']}",
+             'snippet': f"{x.get('points', 0)} pts · {x.get('num_comments', 0)} comments · {x.get('created_at', '')[:10]}"}
+            for x in r.json().get('hits', [])]
+
+
+# ── Crypto / finance ─────────────────────────────────────────────────────────
+
+async def crypto(c, q, n, keys):
+    """CoinGecko live prices — real-time, authoritative for token prices."""
+    kw = keywords(q)
+    r = await c.get('https://api.coingecko.com/api/v3/search', params={'query': kw}, headers=UA)
+    r.raise_for_status()
+    coins = r.json().get('coins', [])[:n]
+    if not coins:
+        return []
+    p = await c.get('https://api.coingecko.com/api/v3/simple/price', headers=UA,
+                    params={'ids': ','.join(x['id'] for x in coins),
+                            'vs_currencies': 'usd',
+                            'include_market_cap': 'true',
+                            'include_24hr_change': 'true'})
+    prices = p.json() if p.is_success else {}
+    now = time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())
+    out = []
+    for x in coins:
+        d = prices.get(x['id'], {})
+        price = f"${d['usd']:,}" if 'usd' in d else 'n/a'
+        ch = f", {d['usd_24h_change']:+.1f}% 24h" if d.get('usd_24h_change') is not None else ''
+        mc = f", mcap ${d['usd_market_cap'] / 1e9:,.2f}B" if d.get('usd_market_cap') else ''
+        out.append({'title': f"{x['name']} ({x['symbol'].upper()})",
+                    'url': f"https://www.coingecko.com/en/coins/{x['id']}",
+                    'snippet': f"Price {price}{ch}{mc} · rank #{x.get('market_cap_rank') or '?'} · CoinGecko {now}"})
+    return out
+
+
+async def arxiv(c, q, n, keys):
+    """arXiv research papers — only for academic / research questions."""
+    import xml.etree.ElementTree as ET
+    kw = keywords(q)
+    r = await c.get('https://export.arxiv.org/api/query',
+                    params={'search_query': f'all:{kw}', 'max_results': n})
+    r.raise_for_status()
+    ns = {'a': 'http://www.w3.org/2005/Atom'}
+    return [{'title': clean(e.findtext('a:title', '', ns), 300),
+             'url': e.findtext('a:id', '', ns),
+             'snippet': f"{e.findtext('a:published', '', ns)[:10]} · " + clean(e.findtext('a:summary', '', ns))}
+            for e in ET.fromstring(r.text).findall('a:entry', ns)]
+
+
+# ── Additional search providers for routing ───────────────────────────────────
+# Each is a separate route. Free ones first, then key-gated.
+
+async def jina(c, q, n, keys):
+    """Jina Reader — free, no key. Fetches readable text from top search URLs.
+    Good fallback when Keenable is rate-limited. Gives full page text, not snippets.
+    """
+    # Use Jina search API (s.jina.ai) to get URLs, then r.jina.ai to read
+    try:
+        r = await c.get(f'https://s.jina.ai/{q}', headers={'Accept': 'application/json'},
+                        timeout=20)
+        if not r.is_success:
+            return []
+        j = r.json()
+        items = j.get('data') or j.get('results') or []
+        out = []
+        for it in items[:n]:
+            url = it.get('url') or it.get('link') or ''
+            title = it.get('title') or url
+            # content is often the readable page text
+            text = it.get('content') or it.get('text') or it.get('description') or ''
+            out.append({'title': title, 'url': url, 'snippet': clean(text, 800)})
+        return out
+    except Exception:
+        return []
+
+
+async def tavily(c, q, n, keys):
+    """Tavily — AI-native search, requires caller's Tavily key (Builder tier).
+    Good for agent-focused queries with structured results.
+    """
+    if not keys.get('tavily'):
+        raise RuntimeError('Tavily key required')
+    r = await c.post('https://api.tavily.com/search',
+                     headers={'Authorization': f'Bearer {keys["tavily"]}',
+                              'Content-Type': 'application/json'},
+                     json={'query': q, 'max_results': n, 'search_depth': 'advanced',
+                           'include_answer': False}, timeout=25)
+    r.raise_for_status()
+    j = r.json()
+    return [{'title': x.get('title', ''), 'url': x.get('url', ''),
+             'snippet': clean(x.get('content') or x.get('raw_content') or '')}
+            for x in j.get('results', [])]
+
+
+async def brave(c, q, n, keys):
+    """Brave Search API — requires caller's Brave key (Builder tier).
+    Independent index, good privacy-focused alternative to Keenable.
+    """
+    if not keys.get('brave'):
+        raise RuntimeError('Brave key required')
+    r = await c.get('https://api.search.brave.com/res/v1/web/search',
+                    headers={'X-Subscription-Token': keys['brave'], 'Accept': 'application/json'},
+                    params={'q': q, 'count': min(n, 20)}, timeout=20)
+    r.raise_for_status()
+    j = r.json()
+    results = (j.get('web') or {}).get('results') or []
+    return [{'title': x.get('title', ''), 'url': x.get('url', ''),
+             'snippet': clean(x.get('description') or x.get('extra_snippets', [None])[0] or '')}
+            for x in results[:n]]
+
+
+async def firecrawl(c, q, n, keys):
+    """Firecrawl search — requires caller's Firecrawl key (Builder tier).
+    Returns full page content, not just snippets. Good for deep research.
+    """
+    if not keys.get('firecrawl'):
+        raise RuntimeError('Firecrawl key required')
+    r = await c.post('https://api.firecrawl.dev/v1/search',
+                     headers={'Authorization': f'Bearer {keys["firecrawl"]}',
+                              'Content-Type': 'application/json'},
+                     json={'query': q, 'limit': n, 'scrapeOptions': {'formats': ['markdown']}},
+                     timeout=30)
+    r.raise_for_status()
+    j = r.json()
+    items = j.get('data') or []
+    return [{'title': x.get('metadata', {}).get('title', x.get('url', '')),
+             'url': x.get('url', ''),
+             'snippet': clean(x.get('markdown') or x.get('content') or '', 800)}
+            for x in items]
+
+
+async def serper(c, q, n, keys):
+    """Serper.dev — Google Search API, requires caller's Serper key (Builder tier).
+    Good when you specifically need Google's ranking.
+    """
+    if not keys.get('serper'):
+        raise RuntimeError('Serper key required')
+    r = await c.post('https://google.serper.dev/search',
+                     headers={'X-API-KEY': keys['serper'], 'Content-Type': 'application/json'},
+                     json={'q': q, 'num': min(n, 10)}, timeout=15)
+    r.raise_for_status()
+    j = r.json()
+    out = []
+    for x in j.get('organic', [])[:n]:
+        out.append({'title': x.get('title', ''), 'url': x.get('link', ''),
+                    'snippet': clean(x.get('snippet') or '')})
+    return out

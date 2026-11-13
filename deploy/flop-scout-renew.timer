@@ -1,0 +1,9 @@
+[Unit]
+Description=Run Flop Scout key renewal hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target

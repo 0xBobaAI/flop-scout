@@ -1,0 +1,12 @@
+[Unit]
+Description=Flop Scout — renew FLOP devnet gateway key (expires every 24h)
+
+[Service]
+Type=oneshot
+User=flop
+Group=flop
+WorkingDirectory=/opt/flop-scout
+EnvironmentFile=/etc/flop-scout.env
+ExecStart=/opt/flop-scout/.venv/bin/python renew_key.py
+StandardOutput=journal
+StandardError=journal

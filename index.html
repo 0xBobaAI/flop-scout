@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Flop Scout — cited answers and live miner explorer for the FLOP network</title>
+<meta name="description" content="Ask anything and get a cited answer computed on FLOP, or explore every miner on the network ranked by real settlement performance.">
+<link rel="stylesheet" href="static/app.css">
+</head><body>
+<div class="shell">
+<header class="topbar">
+  <a class="brand" href="./" aria-label="Flop Scout home">
+    <svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><path d="M20 3 36 12v17L20 38 4 29V12L20 3Z" stroke="#172c43" stroke-width="1.5"/><path d="m26.5 12-4.2 11-10.8 4.8 4.3-11.2L26.5 12Z" fill="#007f80"/><path d="m26.5 12-10.7 4.6 6.5 6.4 4.2-11Z" fill="#172c43"/><circle cx="20" cy="20" r="2" fill="white"/></svg>
+    <span>flop</span><span class="lite">scout</span><span class="alpha">alpha</span>
+  </a>
+  <nav class="nav">
+    <a href="./" class="on">Answer</a>
+    <a href="./miners">Miners</a>
+    <a href="#agent" class="hide-m">Agent mode</a>
+    <a href="#pricing" class="hide-m">Pricing</a>
+    <a href="#api" class="hide-m">API</a>
+    <a href="https://docs.flop.network" class="hide-m">Docs ↗</a>
+    <button class="btn wallet-pill" id="walletBtn"><i></i><span>Connect agent wallet</span></button>
+  </nav>
+</header>
+
+<section class="hero">
+  <div class="eyebrow">Answers for agents and people</div>
+  <h1>Ask anything. Get a cited answer <em>computed on FLOP.</em></h1>
+  <p>Scout searches the open web, the FLOP ecosystem, research papers, code and live crypto data — then a model served by FLOP miners writes a short answer with numbered sources and an on-chain receipt.</p>
+  <form class="ask" id="askForm">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input id="q" type="text" placeholder="What is the FLOP testnet timeline?" autocomplete="off" maxlength="500" aria-label="Question">
+    <span class="kbd">Enter</span>
+    <button class="btn primary" id="goBtn" type="submit">Answer</button>
+  </form>
+  <div class="examples">Try:
+    <button data-q="When does the FLOP testnet start and how long does it run?" data-p="flop">FLOP testnet timeline</button>
+    <button data-q="What is the current price and TVL of Aave?" data-p="crypto">Aave price &amp; TVL</button>
+    <button data-q="proof of inference verification" data-p="science">Proof of inference research</button>
+    <button data-q="Best open-source agent frameworks" data-p="dev">Agent frameworks</button>
+  </div>
+</section>
+
+<div class="strip">
+  <div class="chips" id="presets"></div>
+  <div class="selects">
+    <label for="model">Model</label><select id="model"></select>
+    <label for="compare">Compare</label><select id="compare"><option value="">Off</option></select>
+  </div>
+</div>
+<div class="strip" style="border-top:0;margin-top:0">
+  <div class="netstate"><span class="dot" id="netDot"></span><span class="mono" id="netName">FLOP network</span><span id="netNote">checking…</span></div>
+  <div class="mono" id="paidBy">Compute paid by: Scout (free tier)</div>
+</div>
+
+<main class="workspace">
+  <div class="layout">
+    <div id="results">
+      <div class="empty">
+        <h2>One question, many sources.</h2>
+        <p>Pick a task type above or choose sources on the right. Answers cite every claim with a numbered source, and show which FLOP miner computed them and what it cost.</p>
+      </div>
+    </div>
+    <aside class="card side">
+      <div class="side-head">
+        <div class="eyebrow">Your agent</div>
+        <h2 id="agentTitle">No wallet connected</h2>
+        <p id="agentSub">Answers are computed with Scout's devnet wallet. Connect your own agent wallet to pay for compute yourself and keep the receipts.</p>
+      </div>
+      <div class="side-sec" id="agentStats" hidden>
+        <div class="stats">
+          <div class="stat"><b id="stSessions">0</b><span>settled</span></div>
+          <div class="stat"><b id="stSpend">0</b><span>FLOP spent</span></div>
+          <div class="stat"><b id="stQuota">—</b><span>quota left</span></div>
+        </div>
+        <p class="note" id="stNote"></p>
+        <div class="row"><button class="btn small" id="refreshAgent">Refresh</button><button class="btn small ghost" id="openWallet">Manage wallet</button></div>
+      </div>
+      <div class="side-sec">
+        <h3>Sources</h3>
+        <div class="srcpick" id="sourcePick"></div>
+      </div>
+      <div class="side-sec">
+        <h3>What counts as agent activity</h3>
+        <div class="ledger">
+          <div class="lrow ok"><span class="lmark"></span><div><div class="lname">Compute bought in settled sessions</div><div class="lval">Paid by your wallet, on testnet</div></div></div>
+          <div class="lrow"><span class="lmark"></span><div><div class="lname">Faucet grants, holding tokens</div><div class="lval">Earn nothing by themselves</div></div></div>
+          <div class="lrow warn"><span class="lmark"></span><div><div class="lname">Scripted loops, self-dealing, multi-wallets</div><div class="lval">Flagged and forfeited by FLOP rules</div></div></div>
+        </div>
+        <p class="note">Rules are FLOP's draft airdrop terms. The testnet is not live yet; devnet activity earns nothing. Scout does not guarantee any allocation.</p>
+      </div>
+    </aside>
+  </div>
+</main>
+</div>
+
+<section class="band" id="agent"><div class="shell">
+  <div class="eyebrow">Agent mode</div>
+  <h2>Your questions, your compute, your receipts.</h2>
+  <p>In agent mode every answer is a real inference session on FLOP, paid from a wallet that lives in your browser. Scout handles search, sources and routing; you keep the keys and the on-chain record.</p>
+  <div class="steps">
+    <div class="card step"><b>01</b><h3>Create a wallet</h3><p>An sr25519 FLOP wallet is generated in your browser. The recovery phrase never leaves your device.</p></div>
+    <div class="card step"><b>02</b><h3>Fund &amp; enroll</h3><p>One click requests devnet FLOP from the faucet and enrolls a gateway key signed by your wallet.</p></div>
+    <div class="card step"><b>03</b><h3>Ask real questions</h3><p>Each answer opens a compute session that your wallet pays for. Use it for work you actually need — in the app or through the API.</p></div>
+    <div class="card step"><b>04</b><h3>Track receipts</h3><p>See settled sessions, spend and miners per request, straight from the FLOP gateway ledger.</p></div>
+  </div>
+</div></section>
+
+<section class="band" id="pricing"><div class="shell">
+  <div class="eyebrow">Pricing</div>
+  <h2>Paid per call, in FLOP. <em>No card, no subscription.</em></h2>
+  <p>Two separate charges. Your wallet pays a FLOP miner for the inference itself — that goes straight to them and Scout never touches it. Scout charges a small fee in FLOP for the search, page reading, routing and citations, itemised on every answer. On devnet both are computed and shown but nothing is debited.</p>
+  <div class="plans">
+    <div class="card plan"><h3>Free sources</h3><div class="price">0<small> FLOP</small></div><div class="mono">Keenable · Jina · GitHub · HN · arXiv · CoinGecko</div>
+      <ul><li>No key, no account</li><li>Search and page reading</li><li>Cited answers still carry the answer fee</li></ul>
+      <a class="btn" href="#">Start asking</a></div>
+    <div class="card plan hl"><h3>Per call</h3><div class="price">0.001–0.012<small> FLOP</small></div><div class="mono">billed per source used</div>
+      <ul><li>Exa 0.010 · Firecrawl 0.012 · Brave 0.008</li><li>FLOP network data 0.002–0.005</li><li>Answer reasoning + citations 0.001</li><li>Compare mode +0.002</li></ul>
+      <button class="btn primary" data-open-wallet>Connect agent wallet</button></div>
+    <div class="card plan"><h3>Agent grants</h3><div class="price mono">max_spend<small> FLOP</small></div><div class="mono">bounded mandates · next</div>
+      <ul><li>Issue a key that can spend at most N FLOP</li><li>Rate limit, max uses, expiry</li><li>Built on FLOP <span class="mono">/connect/grants</span></li><li>Not live yet — devnet settles nominally</li></ul>
+      <a class="btn" href="#api">Read the API</a></div>
+  </div>
+  <div class="warnbox"><b>Fair use.</b> FLOP credits agents for compute they genuinely buy. Repeating questions, scripted loops, routing spend to your own miners or splitting activity across wallets is treated as manufactured activity and forfeited. Scout caches duplicate questions for 10 minutes and charges nothing for a cache hit — it never manufactures activity on your behalf.</div>
+</div></section>
+
+<section class="band" id="api"><div class="shell">
+  <div class="eyebrow">API</div>
+  <h2>Made to be called by agents.</h2>
+  <p>One endpoint: search the sources you choose, answer with a model you choose, return citations and the FLOP receipt.</p>
+  <div class="api">
+<pre class="code">POST /api/answer
+{
+  "q": "What is the FLOP testnet timeline?",
+  "sources": ["flop_eco", "keenable"],
+  "model": "flop:qwen/qwen2.5-0.5b-instruct",
+  "keys": { "flop": "&lt;your gateway key&gt;" }
+}</pre>
+<pre class="code">→ {
+  "answers": [{ "answer": "… [1] … [2]", "engine": "flop",
+     "receipt": { "miner": "5Fh3…", "settlementStatus": "pending" },
+     "usage": { "cost_flop": 2.748 }, "latency_s": 41.2 }],
+  "sources": [{ "n": 1, "title": "…", "url": "…" }]
+}
+GET /api/catalog · GET /api/stats · GET /api/health</pre>
+  </div>
+</div></section>
+
+<div class="shell"><footer>
+  <p>Independent tool built on the FLOP devnet. Not affiliated with FLOP Labs. Answers can be wrong — check the sources.</p>
+  <p><a href="https://flop.finance/airdrop/" target="_blank" rel="noopener">FLOP airdrop terms</a> · <a href="https://docs.flop.network" target="_blank" rel="noopener">FLOP docs</a> · <a href="api/stats" target="_blank">Stats</a></p>
+</footer></div>
+
+<dialog id="walletDlg">
+  <div class="dhead"><h2>Agent wallet</h2><button class="x" data-close aria-label="Close">×</button></div>
+  <div class="dbody" id="walletBody"></div>
+</dialog>
+<div class="toast" id="toast"></div>
+<script src="static/wallet.js"></script>
+<script src="static/app.js"></script>
+</body></html>

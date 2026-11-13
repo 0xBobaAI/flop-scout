@@ -1,0 +1,11 @@
+# Web app. Floors, not exact pins: the same file must install on a dev box
+# running Python 3.14 and on Ubuntu 22.04's Python 3.10, and pip resolves the
+# right starlette/anyio for each. Upper bounds guard against breaking majors.
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+httpx>=0.27,<1
+pydantic>=2.7,<3
+
+# Key renewal job (renew_key.py) — signs the gateway enrollment challenge.
+# The web app itself never imports these.
+substrate-interface>=1.7,<2

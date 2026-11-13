@@ -1,0 +1,33 @@
+# Secrets and local state — never commit
+.wallet.json
+.wallet.backup.json
+*.backup.json
+.env
+.env.*
+# A real secrets file placed locally; deploy/flop-scout.env.example is the template
+deploy/flop-scout.env
+
+# Database
+log.db
+*.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Server logs
+server.log
+*.log
+
+# Browser profile dumps — never commit
+shots/
+
+# Scratch
+tmp*.js
+
+# OS
+.DS_Store
+Thumbs.db

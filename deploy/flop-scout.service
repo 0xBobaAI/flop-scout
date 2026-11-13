@@ -1,0 +1,26 @@
+[Unit]
+Description=Flop Scout — FastAPI app (uvicorn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=flop
+Group=flop
+WorkingDirectory=/opt/flop-scout
+EnvironmentFile=/etc/flop-scout.env
+ExecStart=/opt/flop-scout/.venv/bin/uvicorn server:app --host 127.0.0.1 --port 8787 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Hardening — the app only needs its own directory and network
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/flop-scout
+
+[Install]
+WantedBy=multi-user.target
