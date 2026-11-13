@@ -1,0 +1,95 @@
+<section class="hero">
+  <p class="eyebrow">Live miner explorer</p>
+  <h1>Every FLOP miner,<br><em>ranked by real performance.</em></h1>
+  <p class="lede">288 registered miners with GPU inventory, stake, calibration and on-chain settlement rate. The router score combines settled-vs-timeout history with latency Scout has observed itself, refreshed every two minutes.</p>
+</section>
+
+<section class="controls" aria-label="Filters">
+  <div class="filtergroup">
+    <span class="mlabel">Show</span>
+    <div class="chips" id="showChips">
+      <button class="chip on" data-show="priced" type="button">Priced <span class="chip-cnt" id="cntPriced">—</span></button>
+      <button class="chip" data-show="active" type="button">Active <span class="chip-cnt" id="cntActive">—</span></button>
+      <button class="chip" data-show="all" type="button">All <span class="chip-cnt" id="cntAll">—</span></button>
+    </div>
+  </div>
+  <div class="filtergroup">
+    <span class="mlabel">Sort</span>
+    <div class="chips" id="sortChips">
+      <button class="chip on" data-sort="router" type="button">Router score</button>
+      <button class="chip" data-sort="price" type="button">Price</button>
+      <button class="chip" data-sort="capacity" type="button">Compute</button>
+      <button class="chip" data-sort="stake" type="button">Stake</button>
+      <button class="chip" data-sort="activity" type="button">Activity</button>
+    </div>
+  </div>
+  <div class="selects">
+    <label for="modelFilter">Model</label><select id="modelFilter"></select>
+  </div>
+</section>
+
+<section class="netstrip" aria-label="Network status">
+  <div class="netstate"><span class="dot" id="netDot"></span><span class="mono" id="netName">FLOP network</span><span id="netNote">checking…</span></div>
+  <div class="mono" id="updated">loading…</div>
+</section>
+
+<main class="workspace">
+  <div class="split">
+    <div id="board">
+      <div class="skeleton" style="height:96px"></div>
+      <div class="skeleton" style="height:96px;margin-top:10px"></div>
+      <div class="skeleton" style="height:96px;margin-top:10px"></div>
+    </div>
+
+    <aside class="card side">
+      <div class="side-head">
+        <p class="eyebrow">Network at a glance</p>
+        <h2>FLOP devnet</h2>
+        <p>Live from the explorer and gateway.</p>
+      </div>
+      <div class="side-sec">
+        <div class="stats two">
+          <div class="stat"><b id="stMiners">—</b><span>registered</span></div>
+          <div class="stat"><b id="stPriced">—</b><span>priced</span></div>
+          <div class="stat"><b id="stActive">—</b><span>active now</span></div>
+          <div class="stat"><b id="stCap">—</b><span>tok/min</span></div>
+        </div>
+      </div>
+      <div class="side-sec">
+        <h3>Smart router</h3>
+        <div id="routerBox"><p class="note">Loading…</p></div>
+      </div>
+      <div class="side-sec">
+        <h3>Models on devnet</h3>
+        <div id="modelList" class="srcpick"></div>
+      </div>
+      <div class="side-sec">
+        <h3>Reading the card</h3>
+        <div class="ledger">
+          <div class="lrow ok"><span class="lmark"></span><div><div class="lname">Priced &amp; active</div><div class="lval">In the current gateway snapshot, offer window still open</div></div></div>
+          <div class="lrow"><span class="lmark"></span><div><div class="lname">Priced, expired</div><div class="lval">Was in the snapshot, offer window closed — may refresh</div></div></div>
+          <div class="lrow"><span class="lmark"></span><div><div class="lname">Registered only</div><div class="lval">On-chain but not currently offering inference</div></div></div>
+        </div>
+        <p class="note">Prices are devnet-nominal FLOP per G<sub>n</sub>, not market USD. GPU inventory is self-reported. Performance stats appear only after a miner serves a request through Scout.</p>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<section class="band">
+  <div class="band-head">
+    <p class="eyebrow">Leaderboard</p>
+    <h2>The miners that served compute through Scout.</h2>
+    <p>Ranked by requests routed through Scout. Verified work from settled receipts in Scout's own ledger — not self-reported.</p>
+  </div>
+  <div id="leader"></div>
+</section>
+
+<section class="band">
+  <div class="band-head">
+    <p class="eyebrow">Network reach</p>
+    <h2>Where inference is served from.</h2>
+    <p>Datacenter countries reported by priced miners in the current gateway snapshot.</p>
+  </div>
+  <div id="countryGrid"></div>
+</section>

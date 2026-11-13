@@ -1,0 +1,77 @@
+<section class="hero">
+  <p class="eyebrow">Search and page reading, paid per call</p>
+  <h1>Web answers that agents<br><em>pay for in FLOP.</em></h1>
+  <p class="lede">27 sources, cited answers and live on-chain data — priced per call, paid from your own wallet. No card, no account. Every answer shows the miner's inference cost and Scout's fee as two separate numbers.</p>
+
+  <form class="ask" id="askForm" role="search">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input id="q" type="text" placeholder="Which FLOP miners are most reliable right now?" autocomplete="off" maxlength="500" aria-label="Question">
+    <kbd class="kbd">Enter</kbd>
+    <button class="btn primary" id="goBtn" type="submit">Answer</button>
+  </form>
+
+  <div class="examples" role="group" aria-label="Example questions">
+    <span>Try</span>
+    <button data-q="Which FLOP miners are most reliable right now?" data-p="flop">Miner reliability</button>
+    <button data-q="Who are the top FLOP holders and how much have agents spent on inference?" data-p="explorer">On-chain activity</button>
+    <button data-q="What is the FLOP testnet timeline?" data-p="flop">Testnet timeline</button>
+    <button data-q="Best open-source agent frameworks in 2026" data-p="dev">Agent frameworks</button>
+  </div>
+</section>
+
+<section class="controls" aria-label="Search settings">
+  <div class="chips" id="presets" role="group" aria-label="Task preset"></div>
+  <div class="selects">
+    <label for="model">Model</label><select id="model"></select>
+    <label for="compare">Compare</label><select id="compare"><option value="">Off</option></select>
+  </div>
+</section>
+
+<section class="netstrip" aria-label="Network status">
+  <div class="netstate"><span class="dot" id="netDot"></span><span class="mono" id="netName">FLOP network</span><span id="netNote">checking…</span></div>
+  <div class="mono" id="paidBy">Compute paid by: Scout (free tier)</div>
+</section>
+
+<main class="workspace">
+  <div class="split">
+    <div id="results">
+      <div class="empty">
+        <h2>One question, many sources.</h2>
+        <p>Pick a task preset above or tick sources on the right. Every claim gets a numbered citation, and the answer shows which FLOP miner computed it, what the miner charged, and what Scout charged.</p>
+      </div>
+    </div>
+
+    <aside class="card side">
+      <div class="side-head">
+        <p class="eyebrow">Your agent</p>
+        <h2 id="agentTitle">No wallet connected</h2>
+        <p id="agentSub">Answers run on Scout's devnet wallet. Connect your own to pay for compute yourself, keep the receipts and have sessions credited to your address.</p>
+      </div>
+
+      <div class="side-sec" id="agentStats" hidden>
+        <div class="stats">
+          <div class="stat"><b id="stSessions">0</b><span>settled</span></div>
+          <div class="stat"><b id="stSpend">0</b><span>FLOP spent</span></div>
+          <div class="stat"><b id="stQuota">—</b><span>quota left</span></div>
+        </div>
+        <p class="note" id="stNote"></p>
+        <div class="row"><button class="btn small" id="refreshAgent" type="button">Refresh</button><button class="btn small ghost" id="openWallet" type="button">Manage</button></div>
+      </div>
+
+      <div class="side-sec">
+        <h3>Sources</h3>
+        <div class="srcpick" id="sourcePick"></div>
+      </div>
+
+      <div class="side-sec">
+        <h3>What counts as agent activity</h3>
+        <div class="ledger">
+          <div class="lrow ok"><span class="lmark"></span><div><div class="lname">Compute bought in settled sessions</div><div class="lval">Paid by your wallet, on testnet</div></div></div>
+          <div class="lrow"><span class="lmark"></span><div><div class="lname">Faucet grants, holding tokens</div><div class="lval">Earn nothing by themselves</div></div></div>
+          <div class="lrow warn"><span class="lmark"></span><div><div class="lname">Scripted loops, self-dealing, multi-wallets</div><div class="lval">Flagged and forfeited by FLOP rules</div></div></div>
+        </div>
+        <p class="note">FLOP's draft airdrop terms. The testnet is not live; devnet activity earns nothing. Scout guarantees no allocation.</p>
+      </div>
+    </aside>
+  </div>
+</main>

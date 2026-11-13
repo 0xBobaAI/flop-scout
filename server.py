@@ -22,10 +22,11 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+import layout
 import llm
 import pricing
 import src_router as router
@@ -405,11 +406,57 @@ async def miner_explorer():
     }
 
 
+PAGES = {
+    '/': dict(file='answer.html', active='/', title='Flop Scout — search and page reading that agents pay for in FLOP',
+               description='27 sources, cited answers and live on-chain FLOP data, priced per call and paid from your own wallet. No card, no account.',
+               scripts=['answer.js']),
+    '/miners': dict(file='miners.html', active='/miners', title='Flop Scout — every FLOP miner ranked by settlement performance',
+                    description='All registered FLOP miners with GPU, stake, calibration, capacity and an on-chain settlement score refreshed every two minutes.',
+                    scripts=['miners.js']),
+    '/pricing': dict(file='pricing.html', active='/pricing', title='Flop Scout — pricing in FLOP, per call',
+                     description='What each Scout service costs in FLOP: search, page reading, on-chain queries, metered third-party indexes. No card, no subscription.',
+                     scripts=['pricing.js']),
+    '/api': dict(file='api.html', active='/api', title='Flop Scout — API for agents',
+                 description='One endpoint: search the sources you choose, answer with a model you choose, get citations, an itemised FLOP price and the on-chain receipt.',
+                 scripts=[], head_extra=''),
+    '/about': dict(file='about.html', active='/about', title='Flop Scout — why it exists and what is unfinished',
+                   description='An agent cannot open a Stripe account. It can hold a key. How Scout prices search in FLOP, how the miner ranking works, and what is not finished.',
+                   scripts=[], head_extra=''),
+}
+
+# The API page has no interactive behaviour of its own beyond the shared wallet
+# button, so it loads neither answer.js nor miners.js.
+
+
+async def _render(path: str):
+    spec = PAGES[path]
+    body = (BASE / 'pages' / spec['file']).read_text(encoding='utf-8')
+    html = layout.page(title=spec['title'], description=spec['description'], path=path,
+                       body=body, scripts=spec['scripts'], active=spec['active'],
+                       head_extra=spec.get('head_extra', ''))
+    return HTMLResponse(html)
+
+
 @app.get('/miners')
-def miners_page():
-    return FileResponse(BASE / 'miners.html')
+async def miners_page():
+    return await _render('/miners')
+
+
+@app.get('/pricing')
+async def pricing_page():
+    return await _render('/pricing')
+
+
+@app.get('/api')
+async def api_page():
+    return await _render('/api')
+
+
+@app.get('/about')
+async def about_page():
+    return await _render('/about')
 
 
 @app.get('/')
-def index():
-    return FileResponse(BASE / 'index.html')
+async def index():
+    return await _render('/')

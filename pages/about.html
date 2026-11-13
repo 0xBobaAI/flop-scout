@@ -1,0 +1,64 @@
+<section class="hero">
+  <p class="eyebrow">About</p>
+  <h1>An agent cannot open a Stripe account.<br><em>It can hold a key.</em></h1>
+  <p class="lede">Most agent tooling assumes a human with a card: sign up, attach a Visa, buy credits, hope nobody drains the account. FLOP is built for the opposite case — an agent with its own wallet paying per call for what it consumes. Scout is a working service on the other side of that arrangement.</p>
+</section>
+
+<section class="band tight">
+  <div class="band-head">
+    <p class="eyebrow">Why this exists</p>
+    <h2>The payment primitive is generic. Inference was just the first market.</h2>
+  </div>
+  <div class="prose">
+    <p>FLOP already settles compute this way: an agent opens a channel, a miner serves inference, escrow settles on-chain. That works because the primitive underneath is a bounded, verifiable payment — not because inference is special.</p>
+    <p>Scout extends the same primitive to everything else an agent needs from the open internet: web search, page extraction, on-chain queries, price feeds. Each is priced in FLOP, billed per call, and shown as a line item on the answer.</p>
+    <p>Searches that cost Scout nothing upstream stay free. Searches that cost real money upstream — Exa, Brave, Tavily, Firecrawl, Serper — are metered at cost plus a small margin. That distinction is in the price table, not buried in a footnote.</p>
+  </div>
+</section>
+
+<section class="band">
+  <div class="band-head">
+    <p class="eyebrow">The miner ranking</p>
+    <h2>Before you can sell a service on FLOP, you need to know who delivers.</h2>
+  </div>
+  <div class="prose">
+    <p>The FLOP explorer publishes settlement data as 245 unsorted rows of <code>settledCount</code> and <code>timeoutCount</code>. It does not interpret them. Before routing, Scout turns that into one number per miner:</p>
+    <pre class="code">score = 0.55 × on-chain settlement rate
+      + 0.35 × locally observed success × latency factor
+      + 0.10 × currently priced in the gateway</pre>
+    <p>Miners with no history get a neutral 0.5 rather than a penalty, so a new operator is not buried on day one. Refreshed every two minutes, surfaced on <a href="/miners">/miners</a> and used before every inference call.</p>
+    <p>This is the piece with no equivalent elsewhere: a continuously updated, public read on which part of the network actually works.</p>
+  </div>
+</section>
+
+<section class="band">
+  <div class="band-head">
+    <p class="eyebrow">How it is built</p>
+    <h2>Small, and deliberately boring.</h2>
+  </div>
+  <div class="stack">
+    <div class="stack-row"><span class="mono">backend</span><p>Python · FastAPI · httpx. All source fetching is async and parallel; a slow source cannot hold up the answer.</p></div>
+    <div class="stack-row"><span class="mono">sources</span><p>27 in six groups. Adding one is a function plus a registry entry — the UI, presets and pricing pick it up automatically.</p></div>
+    <div class="stack-row"><span class="mono">router</span><p>src_router.py. One scoring function, one cache, refreshed on a timer.</p></div>
+    <div class="stack-row"><span class="mono">pricing</span><p>pricing.py. One table. Changing a price is an edit, not a migration.</p></div>
+    <div class="stack-row"><span class="mono">frontend</span><p>Vanilla JS, no framework, no build step. The wallet is sr25519 in the browser — the recovery phrase never leaves the device.</p></div>
+    <div class="stack-row"><span class="mono">storage</span><p>SQLite. Every answer logged with hashed client, sources, engine, model, miner, cost and latency. No user keys are ever stored.</p></div>
+  </div>
+</section>
+
+<section class="band">
+  <div class="band-head">
+    <p class="eyebrow">Honesty</p>
+    <h2>What is not finished.</h2>
+  </div>
+  <div class="prose">
+    <ul class="caveats">
+      <li><strong>Nominal metering.</strong> Prices are real, debits are not. There is no FLOP market yet to price against.</li>
+      <li><strong>Grants not wired.</strong> The <code>connect/grants</code> mandate flow is designed for, not implemented.</li>
+      <li><strong>Routing is advisory.</strong> The gateway picks the miner; Scout scores, retries and reports — it cannot pin a specific miner.</li>
+      <li><strong>No history.</strong> The router sees a snapshot. It cannot yet say "this miner degraded over the past week".</li>
+      <li><strong>Devnet.</strong> Activity earns nothing. The testnet is not live. Scout guarantees no allocation.</li>
+    </ul>
+    <div class="warnbox"><strong>Not affiliated with FLOP Labs.</strong> Independent tool. Answers can be wrong — every claim links to a numbered source so you can check it. <a href="https://flop.finance/airdrop/" target="_blank" rel="noopener">FLOP airdrop terms</a>.</div>
+  </div>
+</section>

@@ -1,13 +1,9 @@
-/* Flop Scout · Miners explorer  v2 */
-const $ = id => document.getElementById(id);
-const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const short = a => a ? a.slice(0, 6) + '…' + a.slice(-4) : '—';
+/* Flop Scout — Miners page.
+   Depends on agent.js for $, esc, short, toast, agent and the wallet pill. */
+
 const fmtTpm = t => t == null ? '—' : t >= 1_000_000 ? (t / 1_000_000).toFixed(1) + 'M' : t >= 1_000 ? (t / 1_000).toFixed(0) + 'k' : String(t);
 const fmtFlop = v => v ? (v >= 1_000_000 ? (v / 1_000_000).toFixed(1) + 'M' : v >= 1_000 ? (v / 1_000).toFixed(1) + 'k' : v.toFixed(1)) : '0';
-const toast = (msg, ms = 3200) => { const t = $('toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), ms); };
 const FLAG = cc => cc ? String.fromCodePoint(...[...cc.toUpperCase()].map(c => 0x1F1E6 + c.charCodeAt(0) - 65)) : '';
-const LS = 'flopScoutAgent.v1';
-let agent = JSON.parse(localStorage.getItem(LS) || 'null');
 
 let DATA = null;
 let SORT = 'performance';
@@ -236,8 +232,8 @@ function buildFilters() {
 async function load() {
   try {
     const [minersR, routerR] = await Promise.all([
-      fetch('api/miners'),
-      fetch('api/router').catch(() => null)
+      fetch('/api/miners'),
+      fetch('/api/router').catch(() => null)
     ]);
     if (!minersR.ok) throw new Error(minersR.status);
     DATA = await minersR.json();
@@ -275,18 +271,6 @@ document.querySelectorAll('#showChips .chip').forEach(ch => {
   };
 });
 $('modelFilter').onchange = e => { F_MODEL = e.target.value; render(); };
-
-/* ---- wallet pill ---- */
-function renderWalletPill() {
-  const btn = $('walletBtn');
-  btn.classList.toggle('on', !!agent);
-  btn.querySelector('span').textContent = agent
-    ? agent.address.slice(0, 6) + '…' + agent.address.slice(-4)
-    : 'Connect agent wallet';
-}
-$('walletBtn').onclick = () => toast('Open the Answer page to manage your wallet.');
-document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => b.closest('dialog').close());
-renderWalletPill();
 
 load();
 setInterval(load, 60_000);
