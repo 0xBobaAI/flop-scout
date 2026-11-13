@@ -37,8 +37,16 @@ FREE_PER_DAY = int(os.getenv('FREE_ANSWERS_PER_DAY', '20'))       # answers/day/
 USER_PER_MIN = int(os.getenv('USER_ANSWERS_PER_MIN', '6'))         # answers/min/IP with own key
 DUP_WINDOW_S = int(os.getenv('DUPLICATE_WINDOW_S', '600'))         # same question again within 10 min -> cached
 
-app = FastAPI(title='Flop Scout', version='0.3.0')
-app.add_middleware(CORSMiddleware, allow_origins=os.getenv('CORS_ORIGINS', '*').split(','), allow_methods=['GET', 'POST'], allow_headers=['*'])
+app = FastAPI(title='Flop Scout', version='0.4.0')
+# The UI is same-origin, so CORS only matters for agents calling the API from a
+# browser context. Default to our own site rather than '*' — the API is public
+# and readable by any client anyway, but a wildcard invites needless abuse.
+app.add_middleware(CORSMiddleware,
+                   allow_origins=[o.strip() for o in os.getenv(
+                       'CORS_ORIGINS',
+                       'https://flopscout.com,https://www.flopscout.com,http://127.0.0.1:8787,http://localhost:8787',
+                   ).split(',') if o.strip()],
+                   allow_methods=['GET', 'POST'], allow_headers=['*'])
 app.mount('/static', StaticFiles(directory=BASE / 'static'), name='static')
 client = httpx.AsyncClient(timeout=30, follow_redirects=True)
 
