@@ -54,6 +54,8 @@ SERVICES: dict[str, Price] = {
     'hn':           Price(0.0,    'discussion search', free=True),
     'arxiv':        Price(0.0,    'paper search', free=True),
     'crypto':       Price(0.0,    'price lookup', free=True),
+    'defillama':    Price(0.0,    'protocol TVL', free=True),
+    'wikipedia':    Price(0.0,    'reference article', free=True),
     'web_read':     Price(0.002,  'page extract'),
 
     # FLOP-native data — our own indexer work, priced but nominally charged.
@@ -90,7 +92,10 @@ COMPARE_FEE = Price(0.002, 'second model')
 
 
 def price_for(source_id: str) -> Price:
-    return SERVICES.get(source_id, Price(0.0, 'source', free=True))
+    return SERVICES.get(source_id, FREE)
+
+
+FREE = Price(0.0, 'source', free=True)
 
 
 def quote(sources: list[str], compare: bool = False, cache_hit: bool = False) -> dict:
@@ -113,6 +118,7 @@ def quote(sources: list[str], compare: bool = False, cache_hit: bool = False) ->
                           'unit': COMPARE_FEE.unit, 'price_flop': COMPARE_FEE.price_flop, 'free': False})
 
     total = round(sum(i['price_flop'] for i in items), 6)
+    billed = sorted({i['id'] for i in items if i['price_flop'] > 0})
     charged = None if METERING == 'nominal' else total
     return {
         'items': items,
@@ -120,7 +126,20 @@ def quote(sources: list[str], compare: bool = False, cache_hit: bool = False) ->
         'charged_flop': charged,
         'metering': METERING,
         'cache_hit': cache_hit,
+        # What an agent needs to budget: the ceiling, and which lines produced it.
+        'max_flop': total,
+        'billed': billed,
+        'free_lines': sorted({i['id'] for i in items if i['price_flop'] == 0}),
     }
+
+
+def preset_quote(presets: dict, key: str, compare: bool = False) -> dict | None:
+    """One number for a whole preset, so an agent can budget a task, not a call."""
+    p = presets.get(key)
+    if not p:
+        return None
+    q = quote(list(p['sources']), compare=compare)
+    return {'preset': key, 'label': p['label'], 'sources': list(p['sources']), **q}
 
 
 def catalogue() -> dict:

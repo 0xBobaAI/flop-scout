@@ -5,6 +5,7 @@ import asyncio
 import os
 import re
 import time
+from urllib.parse import quote
 
 # Optional deep-read backend. Point SCOUT_URL at your own Scout reader deployment
 # to enable the `web_read` source; leave unset and it degrades to search snippets.
@@ -21,6 +22,30 @@ explain does do did can could should would will
 
 _page_cache: dict = {}   # url -> (ts, result)
 _PAGE_TTL = 300          # 5 min page cache
+
+# FLOP gateway/explorer snapshots. flop_live used to do three live round trips
+# per call (gateway /models, explorer /health, faucet /limits) which measured
+# 16.9 s and made the `flop` preset slower than the answer itself. The data
+# changes on the order of minutes, so it is cached and refreshed behind the call.
+_live_cache: dict = {}
+_LIVE_TTL = 60
+
+
+async def _cached(c, key, url, ttl=_LIVE_TTL, **kw):
+    """GET with a small TTL cache. Returns None instead of raising."""
+    hit = _live_cache.get(key)
+    now = time.time()
+    if hit and now - hit[0] < ttl:
+        return hit[1]
+    try:
+        r = await c.get(url, timeout=kw.pop('timeout', 8), **kw)
+        if not r.is_success:
+            return hit[1] if hit else None
+        data = r.json()
+        _live_cache[key] = (now, data)
+        return data
+    except Exception:
+        return hit[1] if hit else None
 
 
 def keywords(q: str, maxw: int = 5) -> str:
@@ -119,15 +144,15 @@ async def flop_live(c, q, n, keys):
     out = []
     now = time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())
 
-    # Gateway: models + miner count
-    mods_r, health_r, faucet_r = await asyncio.gather(
-        c.get('https://api.flop.network/v1/models'),
-        c.get(f'{EXPLORER}/health'),
-        c.get('https://faucet.flop.network/limits'),
-        return_exceptions=True,
+    # Cached, parallel, and failure-tolerant: a dead faucet must not cost the
+    # whole source its answer.
+    mods, health, faucet = await asyncio.gather(
+        _cached(c, 'gw_models', 'https://api.flop.network/v1/models', timeout=10),
+        _cached(c, 'ex_health', f'{EXPLORER}/health', timeout=6),
+        _cached(c, 'faucet', 'https://faucet.flop.network/limits', ttl=600, timeout=6),
     )
-    if not isinstance(mods_r, Exception) and mods_r.is_success:
-        for x in mods_r.json().get('data', []):
+    if mods:
+        for x in mods.get('data', []):
             xf = x.get('x-flop', {})
             ps = xf.get('price_sources', [])
             countries = ', '.join({d['country_code'] for d in xf.get('datacenters', [])})
@@ -135,12 +160,12 @@ async def flop_live(c, q, n, keys):
                 'title': f"FLOP inference: {x.get('name') or x['id']}",
                 'url': 'https://api.flop.network/v1/models',
                 'snippet': (f"Model {x['id']} · price {x['pricing']['prompt']} FLOP/token (devnet-nominal) · "
-                            f"capacity {xf.get('capacity_tpm'):,} tok/min · {len(ps)} priced miners · "
+                            f"capacity {(xf.get('capacity_tpm') or 0):,} tok/min · {len(ps)} priced miners · "
                             f"countries: {countries} · as of {now}")
             })
 
-    if not isinstance(health_r, Exception) and health_r.is_success:
-        j = health_r.json()
+    if health:
+        j = health
         out.append({
             'title': 'FLOP devnet: chain health',
             'url': 'https://explorer.devnet.flop.network',
@@ -148,8 +173,8 @@ async def flop_live(c, q, n, keys):
                         f"block {j.get('indexedHead')}, finality lag {j.get('headLag')} blocks · {now}")
         })
 
-    if not isinstance(faucet_r, Exception) and faucet_r.is_success:
-        j = faucet_r.json()
+    if faucet:
+        j = faucet
         fc, sp = j.get('faucet', {}), j.get('sponsor', {})
         dc = fc.get('dailyCap', {})
         out.append({
@@ -169,26 +194,28 @@ async def flop_miners_live(c, q, n, keys):
     """
     kw = keywords(q)
 
-    # Fetch top priced miners from gateway
-    mods_r = await c.get('https://api.flop.network/v1/models', timeout=15)
-    if not mods_r.is_success:
+    # Fetch top priced miners from gateway (cached — the flop preset asks for
+    # this at the same time as flop_live, and both used to fetch the same URL)
+    mods = await _cached(c, 'gw_models', 'https://api.flop.network/v1/models', timeout=15)
+    if not mods:
         return []
     priced = []
-    for x in mods_r.json().get('data', []):
+    for x in mods.get('data', []):
         for ps in x.get('x-flop', {}).get('price_sources', []):
             addr = ps.get('miner_address')
             if addr and addr not in [p['address'] for p in priced]:
                 priced.append({'address': addr, 'price': ps.get('flop_per_gn'), 'model': x['id']})
 
-    # Fetch details for top miners in parallel (limit 6 to stay fast)
-    sample = priced[:min(6, n)]
+    # Fetch details for top miners in parallel. Capped at 4 and cached per
+    # address: six simultaneous /miners/{addr} calls measured >15 s each on the
+    # devnet indexer, which is exactly the budget the whole source has.
+    sample = priced[:min(4, n)]
 
     async def detail(pm):
         try:
-            r = await c.get(f'{EXPLORER}/miners/{pm["address"]}', timeout=15)
-            if not r.is_success:
+            d = await _cached(c, f'miner:{pm["address"]}', f'{EXPLORER}/miners/{pm["address"]}', ttl=300, timeout=12)
+            if not d:
                 return None
-            d = r.json()
             w = d.get('work') or {}
             cal = d.get('calibration') or {}
             gpus = (d.get('declaredGpuInventory') or {}).get('gpus') or []
@@ -217,21 +244,21 @@ async def flop_network_stats(c, q, n, keys):
     """Aggregate FLOP network statistics from the devnet explorer.
     Good for questions about network health, total activity, validator count.
     """
-    r = await c.get(f'{EXPLORER}/stats', timeout=15)
-    if not r.is_success:
+    j = await _cached(c, 'ex_stats', f'{EXPLORER}/stats', timeout=15)
+    if not j:
         return []
-    j = r.json()
     now = time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())
+    n = lambda v: f'{v:,}' if isinstance(v, (int, float)) else 'n/a'
     return [{
         'title': 'FLOP devnet: network statistics',
         'url': 'https://explorer.devnet.flop.network',
-        'snippet': (f"Block {j.get('latestBlockNumber'):,} · TPS {j.get('tps')} · "
+        'snippet': (f"Block {n(j.get('latestBlockNumber'))} · TPS {j.get('tps')} · "
                     f"registered miners: {j.get('registeredMiners')} · "
                     f"active validators: {j.get('activeValidators')} · "
-                    f"active agents: {j.get('activeAgents'):,} · "
-                    f"total accounts: {j.get('totalAccounts'):,} · "
-                    f"HTLC sessions: {j.get('totalHTLCs'):,} (active: {j.get('activeHTLCs'):,}) · "
-                    f"24h tx volume: {j.get('txVolume24h'):,} · as of {now}")
+                    f"active agents: {n(j.get('activeAgents'))} · "
+                    f"total accounts: {n(j.get('totalAccounts'))} · "
+                    f"HTLC sessions: {n(j.get('totalHTLCs'))} (active: {n(j.get('activeHTLCs'))}) · "
+                    f"24h tx volume: {n(j.get('txVolume24h'))} · as of {now}")
     }]
 
 
@@ -266,14 +293,55 @@ async def hackernews(c, q, n, keys):
             for x in r.json().get('hits', [])]
 
 
+# ── Reference ────────────────────────────────────────────────────────────────
+
+async def wikipedia(c, q, n, keys):
+    """Wikipedia search — definitions, entities, background.
+
+    Free and keyless. Rescued from the deleted src_data.py prototype; useful
+    precisely because it is the opposite of a search engine: one canonical
+    article instead of ten competing snippets.
+    """
+    kw = keywords(q)
+    r = await c.get('https://en.wikipedia.org/w/rest.php/v1/search/page',
+                    params={'q': kw, 'limit': n}, headers=UA)
+    r.raise_for_status()
+    out = []
+    for p in r.json().get('pages', []):
+        desc = p.get('description') or ''
+        out.append({
+            'title': p.get('title') or '',
+            'url': f"https://en.wikipedia.org/wiki/{p.get('key', '')}",
+            'snippet': clean(p.get('excerpt')) + (f' — {desc}' if desc else ''),
+        })
+    return out
+
+
 # ── Crypto / finance ─────────────────────────────────────────────────────────
 
 async def crypto(c, q, n, keys):
-    """CoinGecko live prices — real-time, authoritative for token prices."""
-    kw = keywords(q)
-    r = await c.get('https://api.coingecko.com/api/v3/search', params={'query': kw}, headers=UA)
-    r.raise_for_status()
-    coins = r.json().get('coins', [])[:n]
+    """CoinGecko live prices — real-time, authoritative for token prices.
+
+    CoinGecko's /search is a name search, not a relevance search: passing several
+    words ("bitcoin ethereum") reliably returns zero results. Query the terms one
+    at a time and concatenate, which is also what a multi-token question means.
+    """
+    terms = [w for w in keywords(q).split() if len(w) > 1][:4]
+    per_term = max(1, n // max(1, len(terms)))   # a 3-token question shouldn't be 3 Bitcoin forks
+    seen, coins = set(), []
+    for term in terms:
+        r = await c.get('https://api.coingecko.com/api/v3/search', params={'query': term}, headers=UA)
+        if not r.is_success:
+            continue
+        added = 0
+        for x in r.json().get('coins', []):
+            if added >= per_term:
+                break
+            if x['id'] not in seen:
+                seen.add(x['id'])
+                coins.append(x)
+                added += 1
+    coins = coins[:n]
     if not coins:
         return []
     p = await c.get('https://api.coingecko.com/api/v3/simple/price', headers=UA,
@@ -295,6 +363,36 @@ async def crypto(c, q, n, keys):
     return out
 
 
+async def defillama(c, q, n, keys):
+    """DeFi protocol TVL — free, keyless, hourly cache.
+
+    /protocols is a several-megabyte payload, so it is cached for an hour and
+    only fetched when this source is selected. Also rescued from src_data.py.
+    """
+    cached = _live_cache.get('llama')
+    now = time.time()
+    if not cached or now - cached[0] > 3600:
+        try:
+            r = await c.get('https://api.llama.fi/protocols', timeout=30)
+            r.raise_for_status()
+            _live_cache['llama'] = (now, r.json())
+        except Exception:
+            if not cached:
+                return []
+    data = _live_cache.get('llama', (0, []))[1]
+    words = [w for w in re.findall(r'\w+', (q or '').lower()) if len(w) > 2]
+    hits = [p for p in data
+            if any(w in (p.get('name') or '').lower() or w == (p.get('symbol') or '').lower()
+                   for w in words)]
+    hits.sort(key=lambda p: p.get('tvl') or 0, reverse=True)
+    return [{'title': f"{p['name']} · {p.get('category', '')}",
+             'url': f"https://defillama.com/protocol/{p.get('slug', '')}",
+             'snippet': (f"TVL ${(p.get('tvl') or 0) / 1e6:,.1f}M · 7d {p.get('change_7d') or 0:+.1f}% · "
+                         f"chains: {', '.join((p.get('chains') or [])[:6])}. "
+                         f"{clean(p.get('description'), 400)}")}
+            for p in hits[:n]]
+
+
 async def arxiv(c, q, n, keys):
     """arXiv research papers — only for academic / research questions."""
     import xml.etree.ElementTree as ET
@@ -313,13 +411,19 @@ async def arxiv(c, q, n, keys):
 # Each is a separate route. Free ones first, then key-gated.
 
 async def jina(c, q, n, keys):
-    """Jina Reader — free, no key. Fetches readable text from top search URLs.
-    Good fallback when Keenable is rate-limited. Gives full page text, not snippets.
+    """Jina Reader — readable page text from a search query.
+
+    Note: s.jina.ai now answers 401 without a token (measured, 2026-11), so this
+    source is key-gated in the registry rather than advertised as free. It still
+    has no cost to Scout when the caller brings their own key.
     """
-    # Use Jina search API (s.jina.ai) to get URLs, then r.jina.ai to read
+    h = {'Accept': 'application/json'}
+    if keys.get('jina'):
+        h['Authorization'] = f'Bearer {keys["jina"]}'
     try:
-        r = await c.get(f'https://s.jina.ai/{q}', headers={'Accept': 'application/json'},
-                        timeout=20)
+        # The query goes into the path, so it has to be quoted: an unescaped '#'
+        # truncated the question ("C# vs Java" searched for "C").
+        r = await c.get(f'https://s.jina.ai/{quote(q, safe="")}', headers=h, timeout=20)
         if not r.is_success:
             return []
         j = r.json()

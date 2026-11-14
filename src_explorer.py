@@ -32,6 +32,31 @@ _FLOP = 1e18
 _cache: dict = {}
 _TTL = 60
 
+# The explorer is a single small VPS-side indexer: nine parallel queries from one
+# worker made several of them time out at 15 s while the same endpoints answered
+# in ~1 s serially. Cap concurrency across this module rather than per-request.
+_EXPLORER_SEM = None
+
+
+def _sem():
+    global _EXPLORER_SEM
+    if _EXPLORER_SEM is None:
+        import asyncio
+        _EXPLORER_SEM = asyncio.Semaphore(3)
+    return _EXPLORER_SEM
+
+
+async def _get(c, path, **kw):
+    """Every explorer call goes through here: 3 concurrent requests, 20 s timeout.
+
+    Measured on the devnet indexer: nine simultaneous queries from one client made
+    five of them time out at 15 s, while the same endpoints answered in ~1 s
+    serialised. A semaphore is cheaper than losing five sources per answer.
+    """
+    kw.setdefault('timeout', 20)
+    async with _sem():
+        return await c.get(f'{API}/{path}', **kw)
+
 
 def _c(key):
     if key in _cache and time.time() - _cache[key][0] < _TTL:
@@ -75,7 +100,7 @@ async def explorer_overview(c, q, n, keys):
     cached = _c('overview')
     if cached:
         return cached
-    r = await c.get(f'{API}/stats', timeout=15)
+    r = await _get(c, 'stats')
     if not r.is_success:
         return []
     j = r.json()
@@ -118,7 +143,7 @@ async def explorer_transfers(c, q, n, keys):
     if addr:
         params['address'] = addr
 
-    r = await c.get(f'{API}/transactions', params=params, timeout=15)
+    r = await _get(c, 'transactions', params=params)
     if not r.is_success:
         return []
     out = []
@@ -157,7 +182,7 @@ async def explorer_richlist(c, q, n, keys):
     cached = _c('richlist')
     if cached:
         return cached
-    r = await c.get(f'{API}/top-holders', params={'limit': min(n, 10)}, timeout=15)
+    r = await _get(c, 'top-holders', params={'limit': min(n, 10)})
     if not r.is_success:
         return []
     out = []
@@ -181,7 +206,7 @@ async def explorer_richlist(c, q, n, keys):
 
 async def explorer_spend(c, q, n, keys):
     """Total inference spend and top agent spenders — who is buying the most compute."""
-    r = await c.get(f'{API}/inference-spend', timeout=15)
+    r = await _get(c, 'inference-spend')
     if not r.is_success:
         return []
     j = r.json()
@@ -213,7 +238,7 @@ async def explorer_reliability(c, q, n, keys):
     """
     addr = _addr_from_q(q)
     if addr:
-        r = await c.get(f'{API}/miner-reliability', params={'miner': addr}, timeout=15)
+        r = await _get(c, 'miner-reliability', params={'miner': addr})
         if r.is_success:
             m = r.json()
             rate = m['settledCount'] / max(m['settledCount'] + m['timeoutCount'], 1)
@@ -233,7 +258,7 @@ async def explorer_reliability(c, q, n, keys):
         return []
 
     # Top reliable miners
-    r = await c.get(f'{API}/miner-reliability', params={'limit': min(n * 2, 20)}, timeout=15)
+    r = await _get(c, 'miner-reliability', params={'limit': min(n * 2, 20)})
     if not r.is_success:
         return []
     rows = r.json().get('data', [])
@@ -259,7 +284,7 @@ async def explorer_reliability(c, q, n, keys):
 
 async def explorer_channels(c, q, n, keys):
     """Active compute channels: agent paying miner for inference right now."""
-    r = await c.get(f'{API}/compute-channels', params={'limit': min(n, 8)}, timeout=15)
+    r = await _get(c, 'compute-channels', params={'limit': min(n, 8)})
     if not r.is_success:
         return []
     out = []
@@ -281,7 +306,7 @@ async def explorer_channels(c, q, n, keys):
 
 async def explorer_agents(c, q, n, keys):
     """Agent wallets registered on FLOP — daily caps, spending limits, status."""
-    r = await c.get(f'{API}/agent-wallets', params={'limit': min(n, 8)}, timeout=15)
+    r = await _get(c, 'agent-wallets', params={'limit': min(n, 8)})
     if not r.is_success:
         return []
     out = []
@@ -307,7 +332,7 @@ async def explorer_capacity(c, q, n, keys):
     cached = _c('capacity')
     if cached:
         return cached
-    r = await c.get(f'{API}/mining-capacity', timeout=15)
+    r = await _get(c, 'mining-capacity')
     if not r.is_success:
         return []
     j = r.json()
@@ -326,7 +351,7 @@ async def explorer_capacity(c, q, n, keys):
 
 async def explorer_priceindex(c, q, n, keys):
     """FLOP inference price index — VWAP, trades, distinct agents/miners per day."""
-    r = await c.get(f'{API}/price-index', timeout=15)
+    r = await _get(c, 'price-index')
     if not r.is_success:
         return []
     days = r.json() if isinstance(r.json(), list) else [r.json()]
@@ -351,7 +376,7 @@ async def explorer_priceindex(c, q, n, keys):
 
 async def explorer_rewards(c, q, n, keys):
     """Total rewards distributed to miners and validators."""
-    r = await c.get(f'{API}/rewards/summary', timeout=15)
+    r = await _get(c, 'rewards/summary')
     if not r.is_success:
         return []
     j = r.json()
@@ -371,7 +396,7 @@ async def explorer_rewards(c, q, n, keys):
 
 async def explorer_staking(c, q, n, keys):
     """FLOP staking: total staked, validators, delegators, commission."""
-    r = await c.get(f'{API}/staking/stats', timeout=15)
+    r = await _get(c, 'staking/stats')
     if not r.is_success:
         return []
     j = r.json()
@@ -396,7 +421,7 @@ async def explorer_address(c, q, n, keys):
     addr = _addr_from_q(q)
     if not addr:
         return []
-    r = await c.get(f'{API}/accounts/{addr}', timeout=15)
+    r = await _get(c, f'accounts/{addr}')
     out = []
     if r.is_success:
         a = r.json()
@@ -412,7 +437,7 @@ async def explorer_address(c, q, n, keys):
         })
 
     # Check if miner + reliability
-    r_m = await c.get(f'{API}/miners/{addr}', timeout=10)
+    r_m = await _get(c, f'miners/{addr}')
     if r_m.is_success:
         m = r_m.json()
         cal = m.get('calibration') or {}
@@ -430,7 +455,7 @@ async def explorer_address(c, q, n, keys):
             )
         })
 
-    r_r = await c.get(f'{API}/miner-reliability', params={'miner': addr}, timeout=10)
+    r_r = await _get(c, 'miner-reliability', params={'miner': addr})
     if r_r.is_success:
         rl = r_r.json()
         if isinstance(rl, dict) and rl.get('settledCount', 0) + rl.get('timeoutCount', 0) > 0:
@@ -456,7 +481,7 @@ async def explorer_transactions(c, q, n, keys):
     if addr:
         return await explorer_address(c, q, n, keys)
 
-    r = await c.get(f'{API}/transactions', params={'limit': min(n, 10)}, timeout=15)
+    r = await _get(c, 'transactions', params={'limit': min(n, 10)})
     if not r.is_success:
         return []
     out = []

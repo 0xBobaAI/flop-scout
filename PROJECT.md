@@ -12,6 +12,8 @@ in FLOP and paid per call from the agent's own wallet. Second surface: a live ra
 FLOP inference miners by real settlement performance.
 
 **Live:** https://flopscout.com (VPS, Ubuntu 22.04)
+**Audit:** `AUDIT.md` — defects found and fixed, an honest valuation, and the
+feature roadmap. Read it after this file.
 **Positioning:** an agent cannot open a Stripe account or hold a Visa. It can hold a key
 and pay a known price for a known amount of work. FLOP's payment primitive is generic —
 inference was just the first market. Scout extends it to everything else an agent needs
@@ -39,12 +41,25 @@ If you ever find yourself adding these together or showing one as "the cost", st
 ## Pricing (`pricing.py`)
 
 One table. `Price(price_flop, unit, free=False)` per service id, plus `ANSWER_FEE` and
-`COMPARE_FEE`. `quote()` returns itemised line items for one request; cache hits are free.
+`COMPARE_FEE`. `quote()` returns itemised line items for one request — `total_flop`
+(computed), `max_flop` (the same ceiling, for budgeting), `billed` and `free_lines`
+(which ids produced the total). Cache hits are free.
+
+`POST /api/quote` exposes that to callers without running a search or an inference.
+It is the honest half of bounded spending until `connect/grants` is wired: a price
+you can read before you commit, but not one the server enforces.
+
+`GET /api/pricing` marks each service `available: false` when the registry dropped
+it (e.g. `web_read` without `SCOUT_URL`). A price for something you cannot buy is
+a bug; hiding the row is a different bug.
 
 Current shape:
 - answer 0.001 · page extract 0.002 · FLOP network data 0.002–0.005
 - metered third-party (Exa 0.010, Firecrawl 0.012, Brave/Tavily 0.008, Serper 0.006)
-- **free when there is no upstream bill**: Keenable, Jina, GitHub, HN, arXiv, CoinGecko
+- **free when there is no upstream bill**: Keenable, GitHub, HN, arXiv, CoinGecko
+- `jina` is priced free but (since 2026-11) needs the caller's own Jina token —
+  s.jina.ai answers 401 without one. `web_read` stays priced even though it is
+  unlisted when `SCOUT_URL` is unset; `/api/pricing` marks it `available: false`
 
 **`METERING = 'nominal'`** — every charge is computed, displayed and logged; nothing is
 debited. There is no FLOP market rate yet. Do not remove this without replacing it with
@@ -65,8 +80,14 @@ score = 0.55 × on-chain settlement rate   # explorer /miner-reliability
 
 - Miners with no history get a neutral **0.5**, not a penalty — a new operator must not be
   buried on day one.
-- Cache refreshes every 2 minutes. `cached_snapshot()` never touches the network and is
-  what page-load endpoints use.
+- Cache refreshes every 2 minutes, with a 45 s failure backoff per source so an
+  explorer outage is not retried on every request. `cached_snapshot()` never touches
+  the network and is what page-load endpoints use.
+- **Settlement history.** Every chain refresh calls `router.on_chain_refresh`, which
+  `server.py` points at `persist_chain()`. It writes settled/timeout per miner into
+  the `reliability` table at most every 15 minutes, keeps 30 days, and powers
+  `GET /api/reliability` plus the 24h trend on `/miners`. Two snapshots are the
+  minimum for a delta; before that the UI says "no history yet" rather than 0%.
 - **Honest limitation:** the FLOP gateway chooses the miner, so Scout cannot pin one. The
   router scores, retries and reports. Never describe it as "routing to" a specific miner.
 
@@ -75,7 +96,7 @@ score = 0.55 × on-chain settlement rate   # explorer /miner-reliability
 ## Layout of the code
 
 ```
-server.py          FastAPI app, all routes, SQLite log, miner aggregation
+server.py          FastAPI app, all routes, SQLite log, miner aggregation, reliability history
 layout.py          page shell: topbar, nav, footer, wallet dialog, <head>
 pages/*.html       page bodies (answer, miners, pricing, api, about)
 pricing.py         the price table and quote()
@@ -85,22 +106,40 @@ src_explorer.py    FLOP explorer sources (13 endpoints)
 src_router.py      miner scoring and cache
 llm.py             FLOP gateway + OpenRouter clients, retry budget, key resolution
 renew_key.py       rotates the devnet gateway key (hourly systemd timer)
-static/app.css     one stylesheet, tokens first
-static/agent.js    shared wallet state (localStorage), dialog, enrollment
+static/app.css     one stylesheet, tokens first, light + dark
+static/agent.js    shared wallet state (localStorage), dialog, enrollment, provider keys
 static/answer.js   Answer page: catalog, presets, request, rendering
 static/miners.js   Miners page: board, leaderboard, router box
 static/pricing.js  Pricing page: renders /api/pricing
+static/og.png      social card, 1200x630 — regenerate if the positioning changes
 static/wallet.js   sr25519 bundle (generated, do not hand-edit)
 deploy/            setup.sh, systemd units, nginx site, env template
 ```
 
 **Conventions that matter:**
+- Every page body is wrapped by `layout.page()` in `<main id="main">`. Page fragments
+  must not contain their own `<main>` — use `<section>` with an `aria-label`.
+- Identity for rate limits and the duplicate cache is `client_id()`, which uses
+  `request.client`. nginx/uvicorn already resolve `X-Forwarded-For`
+  (`--proxy-headers --forwarded-allow-ips=127.0.0.1`). Never read the header
+  directly: anyone can send it and gets a fresh daily budget.
+- All SQLite access goes through `db_lock`. The connection is shared by async
+  handlers and two threadpool routes.
+- Design tokens live in `:root` and `[data-theme="dark"]`, plus a
+  `prefers-color-scheme` block for visitors who never chose. Never add a raw hex
+  below the token block. Contrast is checked against WCAG AA in both themes.
 - Every page is a `pages/*.html` fragment rendered through `layout.page()`. Do not
   reintroduce standalone `index.html` files — the nav active state drifted that way.
 - `agent.js` owns wallet state and emits `agent:change`, `agent:enrolled`,
   `agent:answered`. Page scripts listen; they must not re-implement wallet logic.
-- `$`, `esc`, `short`, `toast`, `agent`, `keyValid`, `FLOP_API`, `LS` come from
-  `agent.js`. Page scripts must not redeclare them.
+- `$`, `esc`, `short`, `toast`, `agent`, `keyValid`, `FLOP_API`, `LS`,
+  `providerKeys`, `activeKeys` come from `agent.js`. Page scripts must not
+  redeclare them.
+- Upstream credentials (OpenRouter, Exa, Tavily, Brave, Firecrawl, Serper, Jina,
+  GitHub) live in `localStorage` under `flopScoutKeys.v1` and are sent in
+  `keys{}` on each request. The server never stores or logs them. A source whose
+  key is missing is disabled in the UI with the reason inline — never offered as
+  a checkbox that can only fail.
 - Absolute paths in fetch (`/api/...`), not relative — pages are served at several depths.
 
 ---
@@ -121,6 +160,15 @@ deploy/            setup.sh, systemd units, nginx site, env template
 - `renew_key.py` derives the address from `WALLET_MNEMONIC` and creates `.wallet.json`
   on a fresh host (the file is git-ignored and never deployed).
 
+**Upstream concurrency**
+- The devnet explorer serialises. Nine concurrent queries from one worker made
+  five time out at 15 s while the same endpoints answered in ~1 s alone. All
+  explorer calls go through `src_explorer._get()`, which caps concurrency at 3.
+- Gateway/faucet snapshots used by sources go through `src_web._cached()` (60 s,
+  faucet 600 s). `flop_live` was 16.9 s of uncached round trips before this.
+- Do not raise the semaphore to "make it faster" without re-measuring. The
+  constraint is the indexer, not the socket.
+
 **Page-load endpoints must not block on the network**
 - `/api/catalog` and `/api/miners` answer from cache and refresh in the background.
 - The model catalog is cached 60 s with an 8 s timeout; a slow gateway is "no live
@@ -131,6 +179,10 @@ deploy/            setup.sh, systemd units, nginx site, env template
   Use `listen 443 ssl http2;`.
 - `proxy_read_timeout 240s` must stay above the app's own 200 s budget, or nginx becomes
   the thing that cuts the answer off.
+
+**FastAPI lifecycle**
+- Use the `lifespan` context manager, not `@app.on_event('startup')` — the latter is
+  deprecated and warns on every boot.
 
 **Python version**
 - Dev box runs 3.14, the VPS runs 3.10. `requirements.txt` uses floors, not exact pins —
@@ -146,13 +198,20 @@ deploy/            setup.sh, systemd units, nginx site, env template
 
 State these plainly in the UI and README; do not paper over them.
 
-1. **Nominal metering.** Prices real, debits not.
+1. **Nominal metering.** Prices real, debits not. The ledger keeps both numbers:
+   `scout_quote_flop` (computed) and `scout_flop` (debited, `NULL` while nominal).
 2. **`connect/grants` not wired.** FLOP's `max_spend` / `rate_limit` / `max_uses` /
    `expiry` mandate is the design target, not implemented. It is what makes an autonomous
    agent safe to fund — the worst case is a known number, not "whatever it can reach".
-3. **Router is advisory.** Cannot pin a miner.
-4. **No history.** Snapshot only; cannot say "degraded over the past week".
+   `/api/quote` gives the ceiling but does not enforce it.
+3. **Router is advisory.** Cannot pin a miner. `openapi_flop.json` has
+   `/connect/preflight` and `POST /keys/ephemeral` (scope-locked, max 5 uses) — that
+   pair is the likely way out.
+4. **History is young.** The `reliability` table starts when the host first refreshes;
+   "degraded over the past week" is untrue until a week has actually passed.
 5. **Devnet.** Activity earns nothing. Testnet not live. No allocation promised.
+6. **Single process.** `_hits` and `_recent` are in memory. Two uvicorn workers would
+   mean two rate-limit maps and two caches.
 
 ---
 
@@ -207,10 +266,14 @@ purpose — that file holds the live key the hourly timer wrote on this host.
 
 ## Before you ship a change
 
-1. `python -c "import ast; …"` on every touched `.py`, `node --check` on every touched `.js`.
-2. Load all five pages: `/`, `/miners`, `/pricing`, `/api`, `/about` — 200, correct nav
-   active state, favicon present.
-3. Hit `POST /api/answer` with one source and confirm `pricing.items` is itemised and
-   `metered`/`metering` are present.
+1. `python -c "import ast; …"` with `feature_version=(3, 10)` on every touched `.py`,
+   `node --check` on every touched `.js`.
+2. Load all five pages plus a 404: `/`, `/miners`, `/pricing`, `/api`, `/about`, `/nope`
+   — correct status, nav active state, favicon. Check light and dark at 1440 and 390 px.
+3. Hit `POST /api/answer` with one source and confirm `pricing.items` is itemised,
+   `metering` is present, and `scout_quote_flop` is non-zero while `scout_flop` is
+   `NULL`. Hit `POST /api/quote` for the same set and compare totals.
+4. Confirm a repeat of the same request returns `cached: true` with
+   `total_flop: 0`, and that changing only `sources` does **not** return the cache.
 4. Confirm no secret reached git: `git grep -E "flop_[A-Za-z0-9_-]{25,}|5[A-Za-z0-9]{47}"`.
 5. If you touched nginx, `nginx -t` before reload.

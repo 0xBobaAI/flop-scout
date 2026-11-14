@@ -9,6 +9,36 @@ const LS = 'flopScoutAgent.v1';
 
 let agent = JSON.parse(localStorage.getItem(LS) || 'null'); // {mnemonic, address, key, expires_at}
 
+/* Provider keys, separate from the wallet: these are API credentials for
+   upstream services (OpenRouter, Exa, Tavily, Brave, Firecrawl, Serper, GitHub).
+   They live in this browser only and are sent per request, never stored server-side.
+   Without this the UI listed five key-gated sources and five OpenRouter models
+   that could only ever return an error. */
+const LSK = 'flopScoutKeys.v1';
+const KEY_FIELDS = [
+  ['openrouter', 'OpenRouter', 'runs the OpenRouter models in the picker'],
+  ['exa', 'Exa', 'neural search source'],
+  ['tavily', 'Tavily', 'AI-native search source'],
+  ['brave', 'Brave', 'independent index source'],
+  ['firecrawl', 'Firecrawl', 'scrape + search source'],
+  ['serper', 'Serper', 'Google results source'],
+  ['github', 'GitHub', 'raises the repo-search rate limit'],
+];
+let providerKeys = JSON.parse(localStorage.getItem(LSK) || '{}');
+
+function saveProviderKeys() {
+  providerKeys = Object.fromEntries(Object.entries(providerKeys).filter(([, v]) => v));
+  localStorage.setItem(LSK, JSON.stringify(providerKeys));
+  document.dispatchEvent(new CustomEvent('keys:change', { detail: providerKeys }));
+}
+
+function activeKeys() {
+  // Wallet gateway key wins over a pasted one; both are per-request only.
+  const out = { ...providerKeys };
+  if (keyValid()) out.flop = agent.key;
+  return out;
+}
+
 const short = a => a ? a.slice(0, 6) + '…' + a.slice(-4) : '';
 const keyValid = () => !!agent?.key && agent.expires_at > Date.now() + 60000;
 
@@ -93,11 +123,12 @@ function walletView(justCreated) {
 
   if (!agent) {
     b.innerHTML = `
-      <p>Your agent wallet is an sr25519 FLOP account created in this browser. Scout never sees the recovery phrase.</p>
+      <p>Created in this browser. Scout never sees the recovery phrase.</p>
       <div class="row"><button class="btn primary" id="wCreate" type="button">Create new wallet</button></div>
       <p style="margin-top:18px">Or import an existing recovery phrase:</p>
       <textarea id="wImport" rows="2" placeholder="twelve words …"></textarea>
-      <div class="row"><button class="btn" id="wImportBtn" type="button">Import</button></div>`;
+      <div class="row"><button class="btn" id="wImportBtn" type="button">Import</button></div>
+      ${providerKeyFields()}`;
     $('wCreate').onclick = async () => {
       await FlopWallet.ready();
       const m = FlopWallet.generate();
@@ -113,6 +144,7 @@ function walletView(justCreated) {
       saveAgent();
       walletView();
     };
+    wireProviderKeyInputs();
     return;
   }
 
@@ -131,7 +163,8 @@ function walletView(justCreated) {
       <button class="btn" id="wCopy" type="button">Copy address</button>
       <button class="btn ghost" id="wForget" type="button">Forget wallet</button>
     </div>
-    <p class="note" id="wLog">Devnet: the faucet grants 25 test FLOP; enrollment gives a 24-hour key with up to 20,000 FLOP of quota. FLOP limits enrollments per day.</p>`;
+    <p class="note" id="wLog">Devnet: the faucet gives 25 test FLOP. The key lasts 24 hours, with up to 20,000 FLOP of quota. Enrollments are capped per day.</p>
+    ${providerKeyFields()}`;
 
   $('wSetup').onclick = () => setupKey();
   $('wCopy').onclick = () => navigator.clipboard.writeText(agent.address).then(() => toast('Address copied'));
@@ -142,6 +175,64 @@ function walletView(justCreated) {
       walletView();
     }
   };
+  wireProviderKeyInputs();
+}
+
+/* The key panel is rendered on both wallet states — it is not tied to having a
+   wallet, and someone who only wants Exa should not have to create one. */
+function providerKeyFields() {
+  return `<details class="pk" ${Object.keys(providerKeys).length ? 'open' : ''}>
+    <summary>Provider keys <span class="c-muted">(${Object.keys(providerKeys).length} set)</span></summary>
+    <p class="note" style="margin-top:6px">Upstream credentials for the key-gated sources and the OpenRouter models. Stored in this browser only, sent per request, never logged by Scout.</p>
+    ${KEY_FIELDS.map(([id, label, hint]) => `
+      <label class="pk-row"><span>${esc(label)}<small>${esc(hint)}</small></span>
+        <input type="password" data-pk="${id}" autocomplete="off" spellcheck="false"
+               placeholder="${providerKeys[id] ? '•••• saved' : 'not set'}" value="${esc(providerKeys[id] || '')}">
+      </label>`).join('')}
+    <div class="row"><button class="btn small" id="pkSave" type="button">Save keys</button>
+      <button class="btn small ghost" id="pkClear" type="button">Clear all</button></div>
+  </details>`;
+}
+
+function wireProviderKeyInputs() {
+  const save = $('pkSave');
+  if (save) save.onclick = () => {
+    document.querySelectorAll('[data-pk]').forEach(i => {
+      const v = i.value.trim();
+      if (v) providerKeys[i.dataset.pk] = v; else delete providerKeys[i.dataset.pk];
+    });
+    saveProviderKeys();
+    toast('Provider keys saved in this browser');
+    walletView();
+  };
+  const clear = $('pkClear');
+  if (clear) clear.onclick = () => {
+    if (!confirm('Clear all provider keys from this browser?')) return;
+    providerKeys = {};
+    saveProviderKeys();
+    walletView();
+  };
+}
+
+/* ── copy buttons (shared: used on /api and /pricing) ───────────────────── */
+function wireCopyButtons() {
+  document.querySelectorAll('[data-copy]').forEach(btn => {
+    if (btn.dataset.wired) return;
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', async () => {
+      // Copy the adjacent <pre> when there is one — that is the real payload.
+      const pre = btn.parentElement?.querySelector('.code');
+      const text = (pre ? pre.textContent : btn.dataset.copy) || '';
+      try {
+        await navigator.clipboard.writeText(text.trim());
+        const old = btn.textContent;
+        btn.textContent = 'Copied';
+        setTimeout(() => { btn.textContent = old; }, 1600);
+      } catch {
+        toast('Copy failed — select the text instead');
+      }
+    });
+  });
 }
 
 /* ── wiring (runs on every page) ────────────────────────────────────────── */
@@ -156,4 +247,5 @@ function walletView(justCreated) {
     b.onclick = () => { const d = b.closest('dialog'); if (d) d.close(); };
   });
   renderWalletButton();
+  wireCopyButtons();
 })();

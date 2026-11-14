@@ -57,11 +57,17 @@ async def main():
         w = {'address': addr}
         save_wallet(w)
 
-    # If the current key is still valid, nothing to do
+    # A key is only "valid" if the gateway accepts it. Local expiry alone let a
+    # revoked key stay in use until its timestamp, with /api/health still green.
     if w.get('gateway_key') and w.get('key_expires_at', 0) > time.time() * 1000:
-        exp = time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(w['key_expires_at'] / 1000))
-        print(f'Key still valid until {exp}')
-        return
+        async with httpx.AsyncClient(timeout=30) as probe:
+            pr = await probe.get(f'{GATEWAY}/keys/me',
+                                 headers={'Authorization': f'Bearer {w["gateway_key"]}'})
+        if pr.status_code == 200:
+            exp = time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(w['key_expires_at'] / 1000))
+            print(f'Key accepted by gateway, valid until {exp}')
+            return
+        print(f'Key rejected by gateway ({pr.status_code}); enrolling a new one')
 
     async with httpx.AsyncClient(timeout=30) as c:
         # 1) Check balance — only fund if the wallet is empty (24h address cooldown)

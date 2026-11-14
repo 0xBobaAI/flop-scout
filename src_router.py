@@ -19,6 +19,8 @@ Cache TTL: reliability data refreshed every 2 min, local scores always current.
 import asyncio
 import logging
 import time
+
+import flop_gateway
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -31,6 +33,9 @@ FLOP_GATEWAY = 'https://api.flop.network/v1'
 
 # How long to cache reliability from explorer
 _REL_TTL = 120  # 2 min
+# How long to wait before retrying a FAILED refresh. Without this a down explorer
+# was retried on every single request, turning one outage into a request storm.
+_FAIL_TTL = 45
 # Min sessions before we trust local stats
 _LOCAL_MIN_CALLS = 3
 # Reliability signal weights
@@ -50,7 +55,7 @@ class MinerScore:
     # from gateway (priced, active)
     is_priced: bool = False
     is_active: bool = False
-    best_price: float = 0.003  # FLOP per G_n
+    best_price: Optional[float] = None   # FLOP per G_n; None = not currently priced
     models: list = field(default_factory=list)
     # from local log
     local_calls: int = 0
@@ -95,6 +100,8 @@ class MinerScore:
 class _RouterState:
     def __init__(self):
         self._chain_ts = 0.0
+        self._chain_err_ts = 0.0
+        self._gateway_err_ts = 0.0
         self._chain: dict[str, dict] = {}     # addr -> reliability row
         self._gateway_ts = 0.0
         self._gateway: dict[str, dict] = {}   # addr -> {models, price, active}
@@ -125,14 +132,27 @@ class _RouterState:
         self._chain = {r['miner']: r for r in rows}
         self._chain_ts = time.time()
         log.debug('chain reliability refreshed: %d miners', len(self._chain))
+        # Hand the raw rows to whoever wants to persist a history snapshot.
+        cb = on_chain_refresh
+        if cb:
+            try:
+                cb(rows)
+            except Exception as e:      # a ledger problem must never break routing
+                log.warning('chain snapshot hook failed: %s', e)
 
     async def _refresh_gateway(self, client):
-        """Snapshot active price_sources from /v1/models."""
-        r = await client.get(f'{FLOP_GATEWAY}/models', timeout=15)
-        r.raise_for_status()
+        """Snapshot active price_sources from /v1/models.
+
+        Reads the shared flop_gateway cache instead of its own copy, so the
+        router and the miner table can never disagree about how many miners are
+        priced and active right now.
+        """
+        payload = await flop_gateway.snapshot(client)
+        if payload is None:
+            raise RuntimeError('no gateway snapshot available')
         now = datetime.now(timezone.utc)
         gw = {}
-        for m in r.json().get('data', []):
+        for m in payload.get('data', []):
             for ps in m.get('x-flop', {}).get('price_sources', []):
                 addr = ps.get('miner_address')
                 if not addr: continue
@@ -154,16 +174,27 @@ class _RouterState:
     async def refresh(self, client, force=False):
         now = time.time()
         async with self._lock:
-            tasks = []
-            if force or now - self._chain_ts > _REL_TTL:
-                tasks.append(self._refresh_chain(client))
-            if force or now - self._gateway_ts > _REL_TTL:
-                tasks.append(self._refresh_gateway(client))
-            if tasks:
-                try:
-                    await asyncio.gather(*tasks)
-                except Exception as e:
-                    log.warning('router refresh error: %s', e)
+            jobs = {}
+            # A failed refresh backs off for _FAIL_TTL instead of retrying on the
+            # next request, and a failed gateway refresh must not wipe prices.
+            if (force or now - self._chain_ts > _REL_TTL) and now - self._chain_err_ts > _FAIL_TTL:
+                jobs['chain'] = self._refresh_chain(client)
+            if (force or now - self._gateway_ts > _REL_TTL) and now - self._gateway_err_ts > _FAIL_TTL:
+                jobs['gateway'] = self._refresh_gateway(client)
+            if not jobs:
+                return
+            names = list(jobs)
+            results = await asyncio.gather(*jobs.values(), return_exceptions=True)
+            for name, res in zip(names, results):
+                if not isinstance(res, Exception):
+                    continue
+                # Stamp the failure so the next requests do not pile on.
+                if name == 'chain':
+                    self._chain_err_ts = time.time()
+                else:
+                    self._gateway_err_ts = time.time()
+                # repr, not str: some transport errors stringify to ''.
+                log.warning('router refresh error (%s): %r', name, res)
 
     # ── Score all miners ──────────────────────────────────────────────────────
 
@@ -183,7 +214,7 @@ class _RouterState:
                 volume_gn=int(cr.get('settledVolumeGn') or 0),
                 is_priced=bool(gw),
                 is_active=gw.get('active', False),
-                best_price=gw.get('price', 0.003),
+                best_price=gw.get('price'),
                 models=gw.get('models', []),
                 local_calls=lo.get('calls', 0),
                 local_ok=lo.get('ok', 0),
@@ -193,8 +224,11 @@ class _RouterState:
             if ms.chain_total > 0:
                 ms.chain_rate = ms.chain_settled / ms.chain_total
             ms.compute_score()
-            if model_id and ms.models and model_id not in ms.models:
-                continue   # miner doesn't serve this model
+            # Only a miner that is currently offering the model can serve it. An
+            # unpriced miner used to pass this filter (empty models list) and win
+            # the ranking on chain history alone, which it cannot honour.
+            if model_id and (not ms.is_priced or model_id not in ms.models):
+                continue
             result.append(ms)
         result.sort(key=lambda m: (not m.is_active, -m.score))
         return result
@@ -231,6 +265,10 @@ class _RouterState:
 
 STATE = _RouterState()
 
+# Set by server.py: on_chain_refresh(rows) persists a settlement snapshot so the
+# router can answer "what changed this week" instead of only "right now".
+on_chain_refresh = None
+
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
@@ -261,6 +299,14 @@ async def routing_snapshot(client, top_n: int = 20) -> dict:
     return cached_snapshot(top_n)
 
 
+def state_has_gateway() -> bool:
+    """True once /v1/models has answered at least once since start.
+
+    A timestamp of 0 is the honest marker: no snapshot, no opinion.
+    """
+    return bool(STATE._gateway_ts)
+
+
 def cached_snapshot(top_n: int = 20) -> dict:
     """Same shape as routing_snapshot but never touches the network.
 
@@ -270,11 +316,15 @@ def cached_snapshot(top_n: int = 20) -> dict:
     """
     miners = STATE.ranked_miners()
     active = [m for m in miners if m.is_active]
+    # No successful gateway snapshot yet => prices are unknown, not zero. The
+    # UI prints "—" for null instead of claiming the network has no miners.
+    prices_known = state_has_gateway()
     return {
         'refreshed_at': int(STATE._chain_ts),
         'chain_miners': len(STATE._chain),
         'gateway_miners': len(STATE._gateway),
-        'active_priced': len(active),
+        'prices_known': prices_known,
+        'active_priced': len(active) if prices_known else None,
         'top': STATE.snapshot(top_n),
         'best': {
             'address': active[0].address if active else None,

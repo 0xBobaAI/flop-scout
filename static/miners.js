@@ -6,9 +6,10 @@ const fmtFlop = v => v ? (v >= 1_000_000 ? (v / 1_000_000).toFixed(1) + 'M' : v 
 const FLAG = cc => cc ? String.fromCodePoint(...[...cc.toUpperCase()].map(c => 0x1F1E6 + c.charCodeAt(0) - 65)) : '';
 
 let DATA = null;
-let SORT = 'performance';
+let SORT = 'router';
 let F_MODEL = '';
-let F_SHOW = 'priced'; // 'all' | 'priced' | 'active'
+let F_ADDR = '';
+let F_SHOW = 'priced'; // 'all' | 'priced' | 'active' | 'movers'
 
 /* ---- performance score 0-1 (only for priced miners with actual data, fallback if no router_score) ---- */
 function score(m) {
@@ -21,73 +22,95 @@ function score(m) {
   return (success * 0.4 + latPts * 0.2 + pricePts * 0.1 + actPts * 0.15 + calPts * 0.15);
 }
 
-/* ---- miner card ---- */
-function gpuTag(m) {
-  if (!m.gpus?.length) return '<span class="c-muted">—</span>';
-  return m.gpus.map(g => `<span class="gpu-tag">${esc(g.name || '?')} ×${g.count} · ${g.mem_gb}GB</span>`).join('');
+function hasHistory(m) { return m.history_24h && m.history_24h.sessions > 0; }
+
+/* A tiny inline trend line: no axes, no labels, just shape. Height is fixed so
+   a flat 60% line and a flat 95% line still read as "flat", not as noise. */
+function sparkline(points, { width = 64, height = 20, stroke = 'var(--teal)' } = {}) {
+  if (!points || points.length < 2) return '';
+  const lo = Math.min(...points), hi = Math.max(...points);
+  // Centre a narrow series instead of blowing it up: 30%->31% is not a cliff, and
+  // stretching it to the full height would say it was.
+  const span = Math.max(hi - lo, 0.15);
+  const mid = (hi + lo) / 2, top = mid + span / 2, bottom = mid - span / 2;
+  const x = i => (i / (points.length - 1)) * (width - 6) + 3;
+  const y = v => height - 3 - ((v - bottom) / span) * (height - 6);
+  const d = points.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const lx = x(points.length - 1), ly = y(points[points.length - 1]);
+  return `<svg class="spark" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" aria-hidden="true">
+    <path d="${d}" fill="none" stroke="${stroke}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="${lx.toFixed(1)}" cy="${ly.toFixed(1)}" r="2.1" fill="${stroke}"/>
+  </svg>`;
+}
+// null change means "no prior sessions to compare against" — not zero, and
+// certainly not +100%. Keep it distinct from 0.0.
+function trend(m) {
+  if (!hasHistory(m)) return null;
+  const c = m.history_24h.settle_rate_change;
+  return c == null ? undefined : c;
 }
 
-function calBadge(m) {
-  if (!m.cal_phase) return '<span class="kind grey">Not calibrated</span>';
-  const cls = m.cal_phase === 'Active' ? '' : 'grey';
-  const tier = m.cal_tier ? ` · ${m.cal_tier}` : '';
-  return `<span class="kind ${cls}">${esc(m.cal_phase)}${esc(tier)}</span>`;
+/* A trend chip: ▲ +0.4% green, ▼ -1.2% amber, flat = neutral. Direction is the
+   whole point — a rate alone cannot distinguish "always been 94%" from
+   "was 99% yesterday". */
+function trendBadge(m) {
+  if (!hasHistory(m)) return '<span class="kind grey" title="Appears once Scout has two settlement snapshots">no history yet</span>';
+  const d = trend(m);
+  if (d === undefined) {
+    return `<span class="kind grey" title="${m.history_24h.sessions} sessions in this window, none before it">new · ${m.history_24h.sessions} sessions</span>`;
+  }
+  const pct = (d * 100);
+  const cls = pct > 0.5 ? 'ok' : pct < -0.5 ? 'warn' : '';
+  const arrow = pct > 0.5 ? '▲' : pct < -0.5 ? '▼' : '▬';
+  return `<span class="kind ${cls === 'ok' ? '' : cls === 'warn' ? 'or' : 'grey'}" title="${m.history_24h.settled} settled / ${m.history_24h.timeouts} timed out in 24h">${arrow} ${pct >= 0 ? '+' : ''}${pct.toFixed(1)}% · 24h</span>`;
 }
 
+/* ---- miner row ---- */
 function minerCard(m, rank) {
   const bar = m.priced ? Math.round(score(m) * 100) : 0;
-  const priceTxt = m.best_price ? `<span class="mono">${m.best_price} FLOP/G<sub>n</sub></span>` : '';
-  const routerBadge = m.router_rank === 1
-    ? '<span class="kind router-best" title="Highest router score — best miner right now">⭐ Best miner</span>'
-    : m.router_score != null && m.router_rank && m.router_rank <= 5
-      ? `<span class="kind router-top" title="Router score ${(m.router_score*100).toFixed(0)}%">▲ Top ${m.router_rank}</span>`
-      : '';
-  const routerScoreLine = m.router_score != null
-    ? `<span class="mlabel">Router</span><span class="mono">${(m.router_score*100).toFixed(0)}% score</span>
-       ${m.router_rank ? `<span class="c-muted mono" style="font-size:11px">rank #${m.router_rank}</span>` : ''}` : '';
+  const priceTxt = m.best_price ? `${m.best_price} FLOP/G<sub>n</sub>` : null;
 
-  const pf = m.calls
-    ? `<span>${m.calls} req</span><span class="dot-sep">·</span>
-       <span class="${m.success_rate >= 0.9 ? 'c-ok' : m.success_rate >= 0.7 ? 'c-warn' : 'c-err'}">${((m.success_rate ?? 0) * 100).toFixed(0)}% ok</span>
-       <span class="dot-sep">·</span><span>${m.avg_latency_s ?? '—'}s avg</span>`
-    : '<span class="c-muted">No receipts via Scout yet</span>';
+  // One status word, not three overlapping badges. Router rank folds into it
+  // instead of adding a second "top miner" chip next to the status chip.
+  const statusTxt = m.router_rank === 1 ? '⭐ Best miner'
+    : m.router_rank && m.router_rank <= 5 ? `Top ${m.router_rank}`
+    : m.active ? 'Active' : m.priced ? 'Expired' : m.cal_phase === 'Active' ? 'Calibrated' : 'Registered';
+  const statusCls = m.router_rank === 1 ? 'router-best' : m.active ? '' : 'grey';
 
-  const stake = m.stake_flop > 0 ? `<span class="mono">${fmtFlop(m.stake_flop)} staked</span>` : '';
-  const capLine = m.cap_gflops ? `<span class="mono">${m.cap_gflops} GFlop/s</span>` : '';
-  const verLine = m.worker_version ? `<span class="mono">v${esc(m.worker_version)}</span>` : '';
+  const trendChip = trendBadge(m);
+  const spark = sparkline(m.settle_series, { stroke: m.history_24h?.settle_rate_change < -0.005 ? 'var(--orange)' : 'var(--teal)' });
+  const gpu = m.gpus?.[0] ? `${esc(m.gpus[0].name || 'GPU')}${m.gpus.length > 1 ? ` +${m.gpus.length - 1}` : ''}` : null;
 
-  const statusBadge = m.active
-    ? '<span class="kind">● Priced &amp; active</span>'
-    : m.priced
-      ? '<span class="kind grey">○ Priced, expired</span>'
-      : m.cal_phase === 'Active'
-        ? '<span class="kind grey">Calibrated</span>'
-        : '<span class="kind grey">Registered</span>';
+  // Via-Scout success only when Scout has actually routed to this miner.
+  const viaScout = m.calls ? `${m.calls} via Scout · ${((m.success_rate ?? 0) * 100).toFixed(0)}% ok` : null;
 
-  return `<article class="card miner-card ${m.active ? 'miner-live' : ''} ${m.router_rank === 1 ? 'miner-best' : ''}" role="listitem">
-  <div class="miner-top">
+  const facts = [
+    priceTxt && `<span class="mf"><b>${priceTxt}</b><small>price</small></span>`,
+    m.cap_gflops && `<span class="mf"><b>${m.cap_gflops}</b><small>GFlop/s</small></span>`,
+    m.stake_flop > 0 && `<span class="mf"><b>${fmtFlop(m.stake_flop)}</b><small>staked</small></span>`,
+    gpu && `<span class="mf"><b>${gpu}</b><small>GPU</small></span>`,
+  ].filter(Boolean).join('');
+
+  const foot = [
+    viaScout,
+    m.strikes && `<span class="c-warn">⚠ ${m.strikes} strikes</span>`,
+    m.blacklisted && '<span class="c-err">blacklisted</span>',
+    m.worker_version && `v${esc(m.worker_version)}`,
+  ].filter(Boolean).join(' <span class="dot-sep">·</span> ');
+
+  return `<article class="card miner-row hoverable ${m.router_rank === 1 ? 'miner-best' : ''}" role="listitem">
+  <div class="mr-top">
     <span class="miner-rank">#${rank}</span>
-    ${statusBadge}
-    ${routerBadge}
-    ${calBadge(m)}
-    <span class="miner-addr mono">${esc(short(m.address))}</span>
-    <button class="btn small ghost miner-copy" data-addr="${esc(m.address)}" aria-label="Copy miner address">copy</button>
-    ${priceTxt ? `<span style="margin-left:auto">${priceTxt}</span>` : ''}
+    <span class="kind ${statusCls}">${statusTxt}</span>
+    ${trendChip}
+    ${spark}
+    <span class="miner-addr mono" title="${esc(m.address)}">${esc(short(m.address))}</span>
+    <button class="btn small ghost miner-copy" data-addr="${esc(m.address)}" aria-label="Copy miner address" type="button">copy</button>
+    <a class="mono c-teal mr-explorer" href="https://explorer.devnet.flop.network/account/${esc(m.address)}" target="_blank" rel="noopener">explorer ↗</a>
   </div>
   ${m.priced ? `<div class="miner-bar-wrap" title="Performance score ${bar}%"><div class="miner-bar" style="width:${bar}%"></div></div>` : ''}
-  <div class="miner-meta">
-    <div class="miner-col"><span class="mlabel">GPU</span><span>${gpuTag(m)}</span></div>
-    <div class="miner-col"><span class="mlabel">Compute</span><span>${capLine || '<span class="c-muted">—</span>'}</span></div>
-    <div class="miner-col"><span class="mlabel">Stake</span><span>${stake || '<span class="c-muted">—</span>'}</span></div>
-    <div class="miner-col"><span class="mlabel">Via Scout</span><div class="miner-pf">${pf}</div></div>
-    ${routerScoreLine ? `<div class="miner-col">${routerScoreLine}</div>` : ''}
-  </div>
-  <div class="miner-foot">
-    ${verLine}
-    ${m.strikes ? `<span class="c-warn">⚠ ${m.strikes} strikes</span>` : ''}
-    ${m.capacity_tpm ? `<span class="mono c-muted">${fmtTpm(m.capacity_tpm)} tok/min</span>` : ''}
-    <a class="mono c-teal" href="https://explorer.devnet.flop.network/account/${esc(m.address)}" target="_blank" rel="noopener">explorer ↗</a>
-  </div>
+  <div class="mr-facts">${facts || '<span class="c-muted">No pricing data</span>'}</div>
+  ${foot ? `<div class="mr-foot">${foot}</div>` : ''}
 </article>`;
 }
 
@@ -95,35 +118,72 @@ function minerCard(m, rank) {
 function render() {
   if (!DATA) return;
   let miners = [...DATA.miners];
-  if (F_SHOW === 'priced')  miners = miners.filter(m => m.priced);
-  if (F_SHOW === 'active')  miners = miners.filter(m => m.active);
-  if (F_MODEL) miners = miners.filter(m => (m.models || []).includes(F_MODEL));
+  if (F_ADDR) miners = miners.filter(m => m.address === F_ADDR);
+  else {
+    if (F_SHOW === 'priced')  miners = miners.filter(m => m.priced);
+    if (F_SHOW === 'active')  miners = miners.filter(m => m.active);
+    if (F_SHOW === 'movers')  miners = miners.filter(m => hasHistory(m) && trend(m) !== undefined && Math.abs(trend(m)) > 0.005);
+    if (F_MODEL) miners = miners.filter(m => (m.models || []).includes(F_MODEL));
+  }
 
   miners.sort((a, b) => {
     if (SORT === 'router')   return score(b) - score(a); // router_score with fallback
+    if (SORT === 'history')  return (trend(b) ?? -9) - (trend(a) ?? -9);  // null/undefined last
     if (SORT === 'price')    return (parseFloat(a.best_price) || 9) - (parseFloat(b.best_price) || 9);
     if (SORT === 'capacity') return (b.cap_gflops || 0) - (a.cap_gflops || 0);
     if (SORT === 'stake')    return (b.stake_flop || 0) - (a.stake_flop || 0);
     if (SORT === 'activity') return (b.calls || 0) - (a.calls || 0);
-    return score(b) - score(a); // performance default = router score
+    return score(b) - score(a);
   });
 
   if (!miners.length) {
-    $('board').innerHTML = `<div class="empty"><h2>No miners match.</h2><p>Try a different filter.</p></div>`;
+    const why = (F_SHOW !== 'all' && DATA.prices_known === false)
+      ? 'The FLOP gateway is not answering, so there are no live prices to rank. Switch <b>Show</b> to <b>All</b> to see the registry anyway.'
+      : 'Try a different filter. History-based views fill in as Scout takes more settlement snapshots.';
+    $('board').innerHTML = `<div class="empty"><h2>No miners match.</h2><p>${why}</p></div>`;
     return;
   }
 
   const activeCnt = miners.filter(m => m.active).length;
   const pricedCnt = miners.filter(m => m.priced).length;
+  // The top few are worth a full card; the rest read better as a dense table —
+  // 20+ near-identical cards in a row was the thing that felt cluttered.
+  const TOP_CARDS = 5;
+  const top = miners.slice(0, TOP_CARDS);
+  const rest = miners.slice(TOP_CARDS);
   $('board').innerHTML = `
     <div class="board-head">
       <h3>${miners.length} miners shown · ${pricedCnt} priced · ${activeCnt} active now</h3>
     </div>
-    <div role="list">${miners.map((m, i) => minerCard(m, i + 1)).join('')}</div>`;
+    <div role="list">${top.map((m, i) => minerCard(m, i + 1)).join('')}</div>
+    ${rest.length ? minerTable(rest, TOP_CARDS) : ''}`;
 
   document.querySelectorAll('.miner-copy').forEach(btn => {
     btn.onclick = () => navigator.clipboard.writeText(btn.dataset.addr).then(() => toast('Address copied'));
   });
+}
+
+/* The long tail: one line per miner, sortable columns already applied upstream. */
+function minerTable(miners, offset) {
+  const row = (m, i) => {
+    const chip = trendBadge(m);
+    const gpu = m.gpus?.[0] ? esc(m.gpus[0].name || 'GPU').replace('NVIDIA ', '') : '—';
+    return `<tr>
+      <td class="mono c-muted">#${offset + i + 1}</td>
+      <td><span class="miner-addr mono" title="${esc(m.address)}">${esc(short(m.address))}</span></td>
+      <td>${m.active ? '<span class="c-ok">active</span>' : m.priced ? '<span class="c-muted">expired</span>' : '<span class="c-muted">registered</span>'}</td>
+      <td>${chip}</td>
+      <td class="mono">${m.best_price ? m.best_price : '—'}</td>
+      <td class="mono">${m.cap_gflops || '—'}</td>
+      <td class="mono">${m.stake_flop > 0 ? fmtFlop(m.stake_flop) : '—'}</td>
+      <td style="font-size:11px">${gpu}</td>
+      <td><a class="mono c-teal" href="https://explorer.devnet.flop.network/account/${esc(m.address)}" target="_blank" rel="noopener">↗</a></td>
+    </tr>`;
+  };
+  return `<div class="table-wrap" style="margin-top:10px"><table class="ltable">
+    <thead><tr><th>#</th><th>Miner</th><th>Status</th><th>24h</th><th>Price</th><th>GFlop/s</th><th>Stake</th><th>GPU</th><th></th></tr></thead>
+    <tbody>${miners.map(row).join('')}</tbody>
+  </table></div>`;
 }
 
 /* ---- leaderboard ---- */
@@ -131,7 +191,7 @@ function renderLeader() {
   if (!DATA) return;
   const top = DATA.miners.filter(m => m.calls > 0).sort((a, b) => (b.calls || 0) - (a.calls || 0)).slice(0, 15);
   if (!top.length) {
-    $('leader').innerHTML = `<p class="note">No receipts recorded via Scout yet. Ask a question on the <a href="./">Answer page</a> to generate your first receipt.</p>`;
+    $('leader').innerHTML = `<p class="note">No Scout receipts yet. <a href="/">Ask a question</a> to create the first one.</p>`;
     return;
   }
   $('leader').innerHTML = `<div class="table-wrap"><table class="ltable">
@@ -145,6 +205,43 @@ function renderLeader() {
       <td class="mono">${(m.flop_spent || 0).toFixed(2)}</td>
       <td class="mono" style="font-size:11px">${(m.gpus?.[0]?.name || '—').replace('NVIDIA ','')}</td>
     </tr>`).join('')}</tbody></table></div>`;
+}
+
+/* ---- movers: who improved, who degraded ---- */
+function renderMovers() {
+  const el = $('movers');
+  if (!el || !DATA) return;
+  const withHist = DATA.miners.filter(m => hasHistory(m) && m.history_24h.sessions >= 3 && trend(m) !== undefined);
+  if (withHist.length < 2) {
+    el.innerHTML = `<div class="empty"><h2>Not enough history yet.</h2>
+      <p>Scout takes a settlement snapshot every 15 minutes. After two, this ranks miners by how their settle rate moved.</p></div>`;
+    return;
+  }
+  const sorted = [...withHist].sort((a, b) => (trend(b) ?? 0) - (trend(a) ?? 0));
+  const up = sorted.slice(0, 6);
+  const down = sorted.slice(-6).reverse().filter(m => trend(m) < 0);
+  const rowT = (m, i) => {
+    const d = trend(m) * 100;
+    const cls = d > 0.5 ? 'c-ok' : d < -0.5 ? 'c-err' : 'c-muted';
+    return `<tr>
+      <td class="mono">#${i + 1}</td>
+      <td><a class="mono" href="/miners?m=${esc(m.address)}">${esc(short(m.address))}</a></td>
+      <td class="mono">${(m.history_24h.settle_rate * 100).toFixed(1)}%</td>
+      <td class="mono ${cls}">${d >= 0 ? '+' : ''}${d.toFixed(1)} pp</td>
+      <td class="mono">${m.history_24h.sessions}</td>
+      <td class="mono" style="font-size:11px">${(m.gpus?.[0]?.name || '—').replace('NVIDIA ','')}</td>
+    </tr>`;
+  };
+  const table = (title, rows, hint) => `<div style="flex:1;min-width:280px">
+    <h3 style="margin-bottom:9px">${title}</h3>
+    <div class="table-wrap"><table class="ltable">
+      <thead><tr><th>#</th><th>Miner</th><th>Settle rate</th><th>24h change</th><th>Sessions</th><th>GPU</th></tr></thead>
+      <tbody>${rows.length ? rows.map(rowT).join('') : `<tr><td colspan="6" class="c-muted">${hint}</td></tr>`}</tbody>
+    </table></div></div>`;
+  el.innerHTML = `<div style="display:flex;gap:16px;flex-wrap:wrap">
+    ${table('Rising', up, 'Nothing improved measurably.')}
+    ${table('Falling', down, 'Nothing degraded measurably.')}
+  </div>`;
 }
 
 /* ---- country grid ---- */
@@ -172,35 +269,58 @@ function renderRouter(data) {
       <td class="mono ${cls}">${sc}%</td>
       <td class="mono" style="font-size:11px">${rate}</td></tr>`;
   }).join('');
-  const bestAddr = best?.address ? best.address.slice(0,8) + '…' + best.address.slice(-4) : 'none';
+  const bestAddr = best?.address ? best.address.slice(0,8) + '…' + best.address.slice(-4) : (snap.prices_known === false ? 'unknown' : 'none');
   el.innerHTML = `
     <div style="margin-bottom:8px">
       <span class="mlabel">Best miner now</span>
       <span class="mono" style="font-size:12px">${bestAddr}</span>
       ${best?.score != null ? `<span class="c-ok mono"> ${(best.score*100).toFixed(0)}%</span>` : ''}
     </div>
-    <div style="margin-bottom:6px">
-      <span class="mlabel">Active priced</span>
-      <span class="mono">${snap.active_priced ?? '—'}</span>
-      <span class="c-muted mono" style="font-size:11px"> / ${snap.chain_miners ?? '—'} known</span>
+    <div style="margin-bottom:8px">
+      <span class="mlabel">Chain sessions tracked</span>
+      <span class="mono">${snap.chain_miners ?? '—'}</span>
+      <span class="c-muted mono" style="font-size:11px"> miners with settlement history</span>
     </div>
-    <table class="ltable" style="font-size:12px;width:100%">
-      <thead><tr><th>Miner</th><th>Score</th><th>Chain %</th></tr></thead>
-      <tbody>${rows}</tbody></table>
-    <p class="note" style="margin-top:6px">Score = 55% on-chain settle rate + 35% local latency/success + 10% active in gateway. Updates every 2 min.</p>`;
+    <div class="table-wrap" style="border:0;box-shadow:none">
+      <table class="ltable" style="font-size:12px;width:100%;min-width:0">
+        <thead><tr><th>Miner</th><th>Score</th><th>Chain %</th></tr></thead>
+        <tbody>${rows}</tbody></table>
+    </div>
+    <p class="note" style="margin-top:8px">Score = 55% on-chain settle rate + 35% local latency/success + 10% active in gateway. Updates every 2 min.</p>`;
 }
 
 /* ---- sidebar ---- */
 function renderSide() {
   if (!DATA) return;
   const n = DATA.network;
-  $('stMiners').textContent = n.total_miners;
-  $('stActive').textContent = n.active_priced;
-  $('stPriced').textContent = n.priced_miners;
-  $('stCap').textContent = fmtTpm(n.capacity_tpm);
-  $('modelList').innerHTML = DATA.models.map(m =>
+  // null means "gateway unreachable", which is not the same as "nothing priced".
+  const num = v => (v == null ? '—' : v);
+  $('stMiners').textContent = num(n.total_miners);
+  $('stActive').textContent = num(n.active_priced);
+  $('stPriced').textContent = num(n.priced_miners);
+  $('stCap').textContent = n.capacity_tpm == null ? '—' : fmtTpm(n.capacity_tpm);
+  if (DATA.prices_known === false) {
+    const note = $('priceNote');
+    if (note) {
+      note.textContent = 'Live prices unavailable right now — the FLOP gateway did not answer. Numbers above are unknown, not zero.';
+      note.hidden = false;
+    }
+  }
+  $('modelList').innerHTML = DATA.models.length ? DATA.models.map(m =>
     `<label><input type="checkbox" disabled checked>${esc(m.name)}
-     <small>${m.active_miners}/${m.miners} priced · ${fmtTpm(m.capacity_tpm)} tok/min</small></label>`).join('');
+     <small>${m.active_miners}/${m.miners} priced · ${fmtTpm(m.capacity_tpm)} tok/min</small></label>`).join('')
+    : '<p class="note">No live model list — the gateway did not answer.</p>';
+
+  const ns = n.settle_series;
+  const row = $('netSparkRow');
+  if (row) {
+    row.hidden = !ns || ns.length < 2;
+    if (ns && ns.length >= 2) {
+      $('netSpark').innerHTML = sparkline(ns.map(p => p.settle_rate), { width: 110, height: 24 });
+      const sv = $('netSparkVal');
+      if (sv) sv.textContent = `${(ns[ns.length - 1].settle_rate * 100).toFixed(0)}% last interval`;
+    }
+  }
 }
 
 /* ---- network strip ---- */
@@ -211,21 +331,23 @@ async function renderNet() {
     $('netDot').classList.toggle('ok', ok);
     $('netName').textContent = `FLOP ${h.network?.network || ''}`.trim();
     const n = DATA?.network;
-    $('netNote').textContent = `${ok ? 'live' : 'degraded'} · ${n ? `${n.total_miners} registered · ${n.priced_miners} priced · ${fmtTpm(n.capacity_tpm)} tok/min · devnet activity earns nothing` : ''}`;
+    const stale = DATA?.stale ? ` · snapshot ${DATA.age_s}s old, refreshing` : '';
+    $('netNote').textContent = `${ok ? 'live' : 'degraded'} · ${n ? `${n.total_miners} registered · ${n.priced_miners} priced · ${fmtTpm(n.capacity_tpm)} tok/min · devnet activity earns nothing` : ''}${stale}`;
   } catch { $('netNote').textContent = 'status unavailable'; }
 }
 
 /* ---- filters ---- */
 function buildFilters() {
   if (!DATA) return;
+  F_ADDR = new URLSearchParams(location.search).get('m') || '';
   const ms = $('modelFilter');
   ms.innerHTML = '<option value="">All models</option>' +
     DATA.models.map(m => `<option value="${esc(m.id)}">${esc(m.name)}</option>`).join('');
-  // update chip counters
   const all = DATA.miners;
   const ca = $('cntAll'); if (ca) ca.textContent = all.length;
   const cp = $('cntPriced'); if (cp) cp.textContent = all.filter(m => m.priced).length;
   const cac = $('cntActive'); if (cac) cac.textContent = all.filter(m => m.active).length;
+  const cm = $('cntMovers'); if (cm) cm.textContent = all.filter(m => hasHistory(m) && trend(m) !== undefined && Math.abs(trend(m)) > 0.005).length;
 }
 
 /* ---- fetch ---- */
@@ -235,21 +357,37 @@ async function load() {
       fetch('/api/miners'),
       fetch('/api/router').catch(() => null)
     ]);
-    if (!minersR.ok) throw new Error(minersR.status);
+    if (!minersR.ok) throw new Error('miners endpoint ' + minersR.status);
     DATA = await minersR.json();
     if (routerR?.ok) {
       DATA.router_snap = await routerR.json();
     }
     $('updated').textContent = 'updated ' + new Date().toLocaleTimeString('en-GB');
     buildFilters();
+    applyDeepLink();
     render();
     renderSide();
     renderLeader();
+    renderMovers();
     renderCountries();
     renderNet();
     renderRouter(DATA);
   } catch (e) {
     if (!DATA) $('board').innerHTML = `<div class="empty"><h2>Could not load miners.</h2><p>${esc(e.message)}</p></div>`;
+    else $('updated').textContent = 'refresh failed — showing last snapshot';
+  }
+}
+
+/* /miners?m=<address> focuses one miner — the movers table links straight here. */
+function applyDeepLink() {
+  const addr = new URLSearchParams(location.search).get('m');
+  if (!addr || !DATA) return;
+  if (!DATA.miners.some(m => m.address === addr)) return;
+  F_ADDR = addr;
+  document.querySelectorAll('#showChips .chip').forEach(x => x.classList.remove('on'));
+  const head = document.querySelector('.board-head');
+  if (head && !head.querySelector('a')) {
+    head.insertAdjacentHTML('beforeend', '<a class="btn small ghost" href="/miners">Show every miner</a>');
   }
 }
 
@@ -267,10 +405,17 @@ document.querySelectorAll('#showChips .chip').forEach(ch => {
     document.querySelectorAll('#showChips .chip').forEach(x => x.classList.remove('on'));
     ch.classList.add('on');
     F_SHOW = ch.dataset.show;
+    // Leaving the focused single-miner view: drop the ?m= so a refresh is not stuck on it.
+    if (F_ADDR) {
+      F_ADDR = '';
+      const u = new URL(location.href);
+      u.searchParams.delete('m');
+      history.replaceState(null, '', u);
+    }
     render();
   };
 });
-$('modelFilter').onchange = e => { F_MODEL = e.target.value; render(); };
+$('modelFilter').onchange = e => { F_MODEL = e.target.value; F_ADDR = ''; render(); };
 
 load();
-setInterval(load, 60_000);
+setInterval(() => { if (!document.hidden) load(); }, 60_000);

@@ -5,10 +5,11 @@ import os
 import time
 from pathlib import Path
 
+from flop_gateway import FLOP_URL
+
 BASE = Path(__file__).parent
 _wallet = BASE / '.wallet.json'
 
-FLOP_URL = os.getenv('FLOP_BASE_URL', 'https://api.flop.network/v1')
 OPENROUTER_URL = 'https://openrouter.ai/api/v1'
 
 # The devnet gateway key expires every 24h and is refreshed by renew_key.py,
@@ -40,6 +41,14 @@ def flop_key() -> str:
         return _key_cache['value']
     return os.getenv('FLOP_API_KEY', '').strip() or _key_cache['value']
 
+# The devnet key is scoped to this model. If the live catalogue is unreachable
+# at page load, the picker must still offer something the caller can run —
+# otherwise it fills with OpenRouter models that need a key nobody has entered.
+DEFAULT_FLOP_MODEL = 'qwen/qwen2.5-0.5b-instruct'
+FALLBACK_MODELS = [{'id': f'flop:{DEFAULT_FLOP_MODEL}', 'provider': 'flop', 'model': DEFAULT_FLOP_MODEL,
+                    'label': 'Qwen2.5 0.5B Instruct (devnet)', 'price': 'live price unavailable',
+                    'capacity_tpm': None, 'miners': 0, 'blocked': False}]
+
 # Curated OpenRouter models shown in the picker (user brings own key).
 OPENROUTER_MODELS = [
     ('openai/gpt-4.1-mini', 'GPT-4.1 mini'),
@@ -61,10 +70,12 @@ async def flop_models(c):
         return _catalog['models']
     out = []
     try:
-        # Short timeout: this runs inside /api/catalog, which renders on every
-        # page load. Better to show a stale/empty model list than to block.
-        r = await c.get(f'{FLOP_URL}/models', timeout=6)
-        for m in r.json().get('data', []):
+        # Shared cache: this runs inside /api/catalog, which renders on every
+        # page load, so it must agree with the miner table and the router.
+        payload = await flop_gateway.snapshot(c)
+        if payload is None:
+            raise RuntimeError('no gateway snapshot')
+        for m in payload.get('data', []):
             xf = m.get('x-flop', {})
             out.append({'id': f"flop:{m['id']}", 'provider': 'flop', 'model': m['id'], 'label': m.get('name') or m['id'],
                         'price': f"{m['pricing']['prompt']} FLOP/token", 'capacity_tpm': xf.get('capacity_tpm'),
@@ -72,16 +83,36 @@ async def flop_models(c):
                         'blocked': f"flop:{m['id']}" in BLOCKED})
     except Exception:
         # Keep the last good catalog rather than emptying the picker
-        return _catalog['models']
+        return [dict(m, blocked=m['id'] in BLOCKED) for m in _catalog['models']]
     _catalog.update(ts=time.time(), models=out)
     return out
 
 
+def cached_models():
+    """Last good model list, without touching the network.
+
+    /api/catalog renders on every navigation and a cold gateway costs seconds.
+    Serving the cached list immediately and refreshing in the background keeps
+    the picker instant while still going live within one request.
+    """
+    if not _catalog['models']:
+        return []
+    return _with_providers([dict(m, blocked=m['id'] in BLOCKED) for m in _catalog['models']])
+
+
+def _with_providers(flop):
+    other = [{'id': f'openrouter:{m}', 'provider': 'openrouter', 'model': m, 'label': l,
+              'price': 'OpenRouter pricing', 'needs_key': 'openrouter'} for m, l in OPENROUTER_MODELS]
+    # Always keep a runnable FLOP option first; a slow gateway is not a reason to
+    # hand the caller a picker full of models they cannot use.
+    if not any(m['provider'] == 'flop' for m in flop):
+        flop = [dict(m) for m in FALLBACK_MODELS]
+    return flop + other
+
+
 async def list_models(c):
     flop = [dict(m, blocked=m['id'] in BLOCKED) for m in await flop_models(c)]
-    other = [{'id': f'openrouter:{m}', 'provider': 'openrouter', 'model': m, 'label': l, 'price': 'OpenRouter pricing',
-              'needs_key': 'openrouter'} for m, l in OPENROUTER_MODELS]
-    return flop + other
+    return _with_providers(flop)
 
 
 def build_messages(q, sources):

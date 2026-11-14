@@ -8,8 +8,8 @@ async function loadPricing() {
     d.services.forEach(s => {
       const g = s.id.startsWith('explorer') ? 'FLOP Explorer'
         : s.id.startsWith('flop') ? 'FLOP Gateway'
-        : ['exa','tavily','brave','firecrawl','serper'].includes(s.id) ? 'Web (key required)'
-        : ['keenable','jina','web_read'].includes(s.id) ? 'Web (free)'
+        : ['exa','tavily','brave','firecrawl','serper','jina'].includes(s.id) ? 'Web (caller key)'
+        : ['keenable','web_read'].includes(s.id) ? 'Web (free)'
         : ['github','hn'].includes(s.id) ? 'Developers'
         : ['arxiv','crypto'].includes(s.id) ? 'Research & Finance' : 'Other';
       (groups[g] = groups[g] || []).push(s);
@@ -18,8 +18,12 @@ async function loadPricing() {
     const fmtP = p => p === 0 ? '<span class="pt-price free">free</span>'
       : `<span class="pt-price">${p.toFixed(3)} FLOP</span>`;
 
+    const availNote = d.available != null && d.available < d.total
+      ? ` · ${d.total - d.available} of ${d.total} not configured on this host`
+      : '';
+
     let html = `<div class="pt-head"><b>Service catalogue</b>
-      <span>metering: ${d.metering === 'nominal' ? 'computed only · not debited on devnet' : d.metering}</span></div>
+      <span>metering: ${d.metering === 'nominal' ? 'computed only · not debited on devnet' : d.metering}${availNote}</span></div>
       <div class="pt-row"><span class="pt-name">Answer reasoning + citations</span>
         <span class="pt-unit">${d.answer_fee.unit}</span>${fmtP(d.answer_fee.price_flop)}</div>
       <div class="pt-row"><span class="pt-name">Compare (second model)</span>
@@ -28,17 +32,20 @@ async function loadPricing() {
     for (const [group, items] of Object.entries(groups)) {
       html += `<div class="pt-group">${group}</div>`;
       items.sort((a,b) => b.price_flop - a.price_flop).forEach(s => {
-        html += `<div class="pt-row">
-          <span class="pt-name">${s.id.replace(/_/g,' ')}</span>
+        // A price you cannot buy is a bug; a price you can read but not buy is
+        // disclosure. Keep the row, mark it, say why.
+        const off = s.available === false;
+        html += `<div class="pt-row${off ? ' unavailable' : ''}">
+          <span class="pt-name">${s.id.replace(/_/g,' ')}${off ? '<span class="pt-flag">not configured</span>' : ''}</span>
           <span class="pt-unit">${s.unit}</span>
           ${fmtP(s.price_flop)}
         </div>`;
       });
     }
-    html += `<div class="pt-foot">Prices are devnet-nominal. There is no FLOP market rate yet — these numbers will be updated for mainnet. All charges are logged per-answer in Scout's ledger.</div>`;
+    html += `<div class="pt-foot">Free sources have no upstream bill. Caller-key sources are listed at their notional price so budgets compare. Prices are devnet-nominal. <code>POST /api/quote</code> returns the same total before a request runs.</div>`;
     el.innerHTML = html;
   } catch (e) {
-    if (el) el.innerHTML = `<p class="note">Could not load pricing data: ${e.message}</p>`;
+    if (el) el.innerHTML = `<p class="note">Could not load pricing data: ${esc(e.message)}</p>`;
   }
 }
 loadPricing();

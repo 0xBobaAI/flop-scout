@@ -1,7 +1,7 @@
 <section class="hero">
-  <p class="eyebrow">Live miner explorer</p>
-  <h1>Every FLOP miner,<br><em>ranked by real performance.</em></h1>
-  <p class="lede">288 registered miners with GPU inventory, stake, calibration and on-chain settlement rate. The router score combines settled-vs-timeout history with latency Scout has observed itself, refreshed every two minutes.</p>
+  <p class="eyebrow">Miner board · live</p>
+  <h1>Every FLOP miner.<br><em>Ranked by what they settle.</em></h1>
+  <p class="lede">Settlement rate, latency and capacity for every registered miner, refreshed every two minutes. The <span class="hl">24-hour trend</span> shows who is slipping now, before it costs you a request.</p>
 </section>
 
 <section class="controls" aria-label="Filters">
@@ -10,6 +10,7 @@
     <div class="chips" id="showChips">
       <button class="chip on" data-show="priced" type="button">Priced <span class="chip-cnt" id="cntPriced">—</span></button>
       <button class="chip" data-show="active" type="button">Active <span class="chip-cnt" id="cntActive">—</span></button>
+      <button class="chip" data-show="movers" type="button">Movers <span class="chip-cnt" id="cntMovers">—</span></button>
       <button class="chip" data-show="all" type="button">All <span class="chip-cnt" id="cntAll">—</span></button>
     </div>
   </div>
@@ -17,6 +18,7 @@
     <span class="mlabel">Sort</span>
     <div class="chips" id="sortChips">
       <button class="chip on" data-sort="router" type="button">Router score</button>
+      <button class="chip" data-sort="history" type="button">24h trend</button>
       <button class="chip" data-sort="price" type="button">Price</button>
       <button class="chip" data-sort="capacity" type="button">Compute</button>
       <button class="chip" data-sort="stake" type="button">Stake</button>
@@ -33,7 +35,7 @@
   <div class="mono" id="updated">loading…</div>
 </section>
 
-<main class="workspace">
+<section class="workspace" aria-label="Miner board">
   <div class="split">
     <div id="board">
       <div class="skeleton" style="height:96px"></div>
@@ -41,7 +43,7 @@
       <div class="skeleton" style="height:96px;margin-top:10px"></div>
     </div>
 
-    <aside class="card side">
+    <aside class="card side" aria-label="Network summary">
       <div class="side-head">
         <p class="eyebrow">Network at a glance</p>
         <h2>FLOP devnet</h2>
@@ -54,6 +56,12 @@
           <div class="stat"><b id="stActive">—</b><span>active now</span></div>
           <div class="stat"><b id="stCap">—</b><span>tok/min</span></div>
         </div>
+        <div class="net-spark-row" id="netSparkRow" hidden>
+          <span class="mlabel">Network settle rate</span>
+          <div id="netSpark"></div>
+          <span class="mono" id="netSparkVal"></span>
+        </div>
+        <p class="note" id="priceNote" hidden></p>
       </div>
       <div class="side-sec">
         <h3>Smart router</h3>
@@ -66,30 +74,39 @@
       <div class="side-sec">
         <h3>Reading the card</h3>
         <div class="ledger">
-          <div class="lrow ok"><span class="lmark"></span><div><div class="lname">Priced &amp; active</div><div class="lval">In the current gateway snapshot, offer window still open</div></div></div>
-          <div class="lrow"><span class="lmark"></span><div><div class="lname">Priced, expired</div><div class="lval">Was in the snapshot, offer window closed — may refresh</div></div></div>
-          <div class="lrow"><span class="lmark"></span><div><div class="lname">Registered only</div><div class="lval">On-chain but not currently offering inference</div></div></div>
+          <div class="lrow ok"><span class="lmark"></span><div><div class="lname">Priced &amp; active</div><div class="lval">Offering inference now</div></div></div>
+          <div class="lrow"><span class="lmark"></span><div><div class="lname">Priced, expired</div><div class="lval">Offer window closed. May return.</div></div></div>
+          <div class="lrow"><span class="lmark"></span><div><div class="lname">Registered only</div><div class="lval">On-chain, not offering inference now</div></div></div>
         </div>
-        <p class="note">Prices are devnet-nominal FLOP per G<sub>n</sub>, not market USD. GPU inventory is self-reported. Performance stats appear only after a miner serves a request through Scout.</p>
+        <p class="note">Prices: devnet FLOP per G<sub>n</sub>, not market USD. GPU specs are self-reported. The 24h trend appears after two snapshots.</p>
       </div>
     </aside>
   </div>
-</main>
+</section>
 
 <section class="band">
   <div class="band-head">
     <p class="eyebrow">Leaderboard</p>
-    <h2>The miners that served compute through Scout.</h2>
-    <p>Ranked by requests routed through Scout. Verified work from settled receipts in Scout's own ledger — not self-reported.</p>
+    <h2>Miners that served Scout requests.</h2>
+    <p>Ranked by requests routed through Scout, from settled receipts in Scout's ledger.</p>
   </div>
   <div id="leader"></div>
 </section>
 
 <section class="band">
   <div class="band-head">
+    <p class="eyebrow">Settlement trend</p>
+    <h2>Who is getting better, and who is slipping.</h2>
+    <p>24-hour change in settlement rate. 100% yesterday and 60% today is the miner that burns your retries.</p>
+  </div>
+  <div id="movers"></div>
+</section>
+
+<section class="band">
+  <div class="band-head">
     <p class="eyebrow">Network reach</p>
-    <h2>Where inference is served from.</h2>
-    <p>Datacenter countries reported by priced miners in the current gateway snapshot.</p>
+    <h2>Where inference runs.</h2>
+    <p>Countries reported by priced miners.</p>
   </div>
   <div id="countryGrid"></div>
 </section>

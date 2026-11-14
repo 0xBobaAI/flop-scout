@@ -1,0 +1,68 @@
+<section class="hero">
+  <p class="eyebrow">Demand · free tier</p>
+  <h1>Who asks Scout,<br><em>and how often they come back.</em></h1>
+  <p class="lede">Daily volume, unique clients, returning share and source success. No question text, no client addresses. FLOP figures are <strong>quoted, not debited</strong>.</p>
+</section>
+
+<section class="controls" aria-label="Window">
+  <div class="filtergroup">
+    <span class="mlabel">Window</span>
+    <div class="chips" id="winChips">
+      <button class="chip" data-days="7" type="button">7 days</button>
+      <button class="chip on" data-days="30" type="button">30 days</button>
+      <button class="chip" data-days="90" type="button">90 days</button>
+    </div>
+  </div>
+  <div class="netstate"><span class="dot" id="anDot"></span><span class="mono" id="anNote">loading…</span></div>
+</section>
+
+<section class="band tight" aria-label="Headline numbers">
+  <div class="stats" id="kpis">
+    <div class="stat"><b id="kAnswers">—</b><span>Answers</span></div>
+    <div class="stat"><b id="kClients">—</b><span>Unique clients</span></div>
+    <div class="stat"><b id="kReturn">—</b><span>Returning share</span></div>
+    <div class="stat"><b id="kAnswered">—</b><span>Answered OK</span></div>
+    <div class="stat"><b id="kQuoted">—</b><span>Quoted FLOP (not debited)</span></div>
+    <div class="stat"><b id="kUser">—</b><span>Own-key share</span></div>
+  </div>
+</section>
+
+<section class="band tight" aria-label="Daily demand">
+  <div class="card" style="padding:18px 20px">
+    <div class="board-head"><h3>Daily answers and unique clients</h3><span class="mono c-muted" id="legend"></span></div>
+    <div id="chart" role="img" aria-label="Daily answers and unique clients"></div>
+    <div class="table-wrap" style="margin-top:14px">
+      <table class="ltable" id="dailyTable">
+        <thead><tr><th>Day</th><th>Answers</th><th>Answered</th><th>Clients</th><th>Own key</th><th>Quoted FLOP</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="band tight" aria-label="Sources and engines">
+  <div class="grantbox">
+    <div class="card" style="padding:18px 20px">
+      <div class="board-head"><h3>Sources by demand</h3><span class="mono c-muted">calls · success</span></div>
+      <div class="table-wrap">
+        <table class="ltable" id="srcTable">
+          <thead><tr><th>Source</th><th>Calls</th><th>OK</th><th>Success</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="grantnote">
+      <div class="card" style="padding:18px 20px">
+        <h3 style="font:600 14px var(--display);margin:0 0 10px">Notes</h3>
+        <p><strong>Returning:</strong> clients active on 2+ days in the window.</p>
+        <p><strong>Clients</strong> are IP-based, so people behind one NAT count once.</p>
+        <p><strong>Quoted FLOP</strong> is computed, not debited.</p>
+        <div class="mono c-muted" id="engines" style="margin-top:12px"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band tight" aria-label="Export">
+  <p class="note">Raw aggregates as JSON: <a href="/api/analytics?days=30">/api/analytics?days=30</a> (max 90 days).</p>
+</section>

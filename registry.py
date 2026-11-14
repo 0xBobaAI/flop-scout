@@ -23,7 +23,8 @@ SOURCES = {
         'label': 'Jina Reader',
         'group': 'Web',
         'fn': w.jina,
-        'hint': 'Free page reader · full text extraction · fallback route',
+        'key': 'jina',
+        'hint': 'Readable page text · Jina token required · fallback route',
     },
     'web_read': {
         'label': 'Deep page read',
@@ -185,6 +186,12 @@ SOURCES = {
     },
 
     # ── Crypto ────────────────────────────────────────────────────────────────
+    'defillama': {
+        'label': 'DefiLlama',
+        'group': 'Crypto',
+        'fn': w.defillama,
+        'hint': 'DeFi protocol TVL, chains, 7d change · free',
+    },
     'crypto': {
         'label': 'CoinGecko',
         'group': 'Crypto',
@@ -193,6 +200,12 @@ SOURCES = {
     },
 
     # ── Research ─────────────────────────────────────────────────────────────
+    'wikipedia': {
+        'label': 'Wikipedia',
+        'group': 'Research',
+        'fn': w.wikipedia,
+        'hint': 'Canonical article for an entity or term · free',
+    },
     'arxiv': {
         'label': 'arXiv',
         'group': 'Research',
@@ -202,11 +215,11 @@ SOURCES = {
 }
 
 PRESETS = {
-    'general': {
-        'label': 'General',
-        'icon': '🌐',
-        'sources': ['keenable', 'web_read'],
-        'description': 'Web search + full page reading for any open question.',
+    'auto': {
+        'label': 'Auto',
+        'icon': '✦',
+        'sources': ['auto'],
+        'description': 'Scout picks free sources from your question. Never adds a paid one.',
     },
     'flop': {
         'label': 'FLOP',
@@ -214,22 +227,10 @@ PRESETS = {
         'sources': ['flop_live', 'flop_miners', 'flop_stats', 'explorer_overview', 'keenable'],
         'description': 'Full FLOP network picture: live gateway + on-chain explorer + web.',
     },
-    'explorer': {
-        'label': 'Explorer',
-        'icon': '⛓',
-        'sources': ['explorer_overview', 'explorer_transfers', 'explorer_spend', 'explorer_reliability', 'explorer_channels'],
-        'description': 'On-chain activity: transfers, inference spend, channel states, miner reliability.',
-    },
-    'flop_full': {
-        'label': 'FLOP full',
-        'icon': '⧡',
-        'sources': ['flop_live', 'flop_miners', 'flop_stats', 'explorer_overview', 'explorer_reliability', 'keenable'],
-        'description': 'Complete FLOP picture: gateway + on-chain + miner reliability + web.',
-    },
     'crypto': {
         'label': 'Crypto',
         'icon': '◈',
-        'sources': ['crypto', 'keenable'],
+        'sources': ['crypto', 'defillama', 'keenable'],
         'description': 'Live token prices from CoinGecko plus web context.',
     },
     'dev': {
@@ -241,7 +242,7 @@ PRESETS = {
     'research': {
         'label': 'Research',
         'icon': '∂',
-        'sources': ['arxiv', 'keenable', 'web_read'],
+        'sources': ['arxiv', 'wikipedia', 'keenable', 'web_read'],
         'description': 'Academic papers + deep web reading.',
     },
 }
