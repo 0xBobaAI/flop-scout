@@ -1290,9 +1290,62 @@ async def _not_found(request: Request, exc):
 
 @app.get('/robots.txt')
 def robots():
+    # /api/ used to be disallowed, which hid the API from exactly the readers it
+    # is for. Crawlers only issue GETs, and every GET under /api/ is a cheap,
+    # cached read; the paid endpoints are POST and rate-limited per caller.
     return PlainTextResponse(
-        'User-agent: *\nAllow: /\nDisallow: /api/\n\n'
+        'User-agent: *\nAllow: /\n\n'
         f'Sitemap: {SITE}/sitemap.xml\n')
+
+
+_LLMS_TXT = f'''# Flop Scout
+
+> Web search, page reading and FLOP network data for AI agents, priced per call in FLOP.
+> Also a live ranking of FLOP inference miners by on-chain settlement rate, with alerts.
+
+Runs on the FLOP devnet. Charges are nominal: computed, shown and logged, never debited.
+Scout's own fee and the miner's inference cost are always reported as two separate numbers.
+
+## API
+
+- [OpenAPI schema]({SITE}/openapi.json): every endpoint, request and response shape
+- [Quick start]({SITE}/docs/quick-start): quote a request, then ask it
+- [Endpoints]({SITE}/docs/endpoints): full list with descriptions
+- [Errors]({SITE}/docs/errors): status codes and what to do
+- [Pricing]({SITE}/docs/pricing): price per source, in FLOP
+
+## Main calls
+
+- POST {SITE}/api/quote: price a request before running it. With `q` and `model` it also returns the gateway's estimate of the miner's cost. Spends nothing
+- POST {SITE}/api/answer: search the chosen sources and return a cited answer with an itemised price. `sources: ["auto"]` picks free sources only
+- GET {SITE}/api/catalog: sources, presets and models
+- GET {SITE}/api/pricing: the price list
+- GET {SITE}/api/inference-prices: every FLOP model priced as a whole request. No key needed
+
+## Miner data
+
+- GET {SITE}/api/router: miners ranked by settlement rate and local success
+- GET {SITE}/api/miners: every registered miner with GPU, stake and 24h settlement delta
+- GET {SITE}/api/miners/{{address}}/history: one miner's settlement history, up to 30 days
+- POST {SITE}/api/alerts: get notified when a miner's settle rate drops below a threshold
+
+## Limits
+
+- Free tier is rate-limited per caller; limits are returned in X-RateLimit-* headers
+- FLOP answers need a FLOP gateway key; pass your own in `keys.flop`, or `keys.openrouter` for OpenRouter models
+- Source code: https://github.com/0xBobaAI/flop-scout (MIT)
+'''
+
+
+@app.get('/llms.txt')
+def llms_txt():
+    return PlainTextResponse(_LLMS_TXT)
+
+
+@app.get('/openapi.json', include_in_schema=False)
+def openapi_alias():
+    """The conventional path. FastAPI serves the same schema at /api/openapi.json."""
+    return JSONResponse(app.openapi())
 
 
 @app.get('/sitemap.xml')

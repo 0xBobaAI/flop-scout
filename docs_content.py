@@ -166,12 +166,17 @@ DOCS = {
   <li><strong>Devnet only.</strong> Activity earns nothing. No allocation is promised.</li>
 </ul>
 <div class="warnbox"><strong>Not affiliated with FLOP Labs.</strong> Independent tool. Answers can be wrong. Every claim links to its source. <a href="https://flop.finance/airdrop/" target="_blank" rel="noopener">FLOP airdrop terms</a>.</div>
-<h2>Contact</h2>
-<p>Questions, feedback, or just want to talk about the project:</p>
+<h2>Project</h2>
+<p>Updates, changes and status:</p>
 <ul>
-  <li>Twitter  <a href="https://twitter.com/bingobongo_0" target="_blank" rel="noopener">@bingobongo_0</a></li>
-  <li>Telegram  <a href="https://t.me/iLiaBR" target="_blank" rel="noopener">@iLiaBR</a></li>
+  <li>X  <a href="https://x.com/Flopscoutcom" target="_blank" rel="noopener">@Flopscoutcom</a></li>
   <li>GitHub  <a href="https://github.com/0xBobaAI/flop-scout" target="_blank" rel="noopener">0xBobaAI/flop-scout</a></li>
+</ul>
+<h2>Team</h2>
+<p>Questions, feedback, or to talk to the person who built it:</p>
+<ul>
+  <li>X  <a href="https://x.com/bingobongo_0" target="_blank" rel="noopener">@bingobongo_0</a></li>
+  <li>Telegram  <a href="https://t.me/iLiaBR" target="_blank" rel="noopener">@iLiaBR</a></li>
 </ul>
 '''),
 }
