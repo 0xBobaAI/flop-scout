@@ -76,7 +76,7 @@ d = json.load(sys.stdin)
 assert d["total_flop"] > 0, d
 inf = d.get("inference") or {}
 assert inf.get("floor"), f"no inference estimate: {inf}"
-print(f"  quote: {d['total_flop']} FLOP fee, miner floor {inf['floor']['cost_flop']} FLOP")
+print("  quote: %s FLOP fee, miner floor %s FLOP" % (d["total_flop"], inf["floor"]["cost_flop"]))
 ' || fail "/api/quote did not price the request"
 
 # The default --forwarded-allow-ips=127.0.0.1 is what makes client_id() see the
