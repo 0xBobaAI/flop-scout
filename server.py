@@ -503,14 +503,20 @@ async def router_state():
 async def inference_prices(max_tokens: int = 250):
     """What every FLOP model costs to run, from the gateway's own estimator.
 
-    Three things this gives that `/v1/models` does not:
+    What this adds over `/v1/models` is the arithmetic a unit price cannot
+    express: whole-request FLOP cost, the token split, GFLOPs and the gateway's
+    latency estimate. Measured, `estimated_cost_flop` is exactly
+    `pricing.prompt x total_tokens` — no hidden floor or multiplier — so the
+    number a caller budgets against is the number that will be charged.
 
-    * the gateway's `available_miners` per model — its scheduler's answer, not
-      Scout counting `price_sources` entries;
-    * a whole-request FLOP cost, not a per-token unit price an agent has to do
-      arithmetic on;
-    * it costs nothing and needs no key, so it answers while the devnet
-      allowance is dead.
+    And it costs nothing to ask. The operation needs no key and spends nothing,
+    so this answers while the devnet allowance is dead, which no other FLOP call
+    here does.
+
+    `available_miners` is included but is *not* an independent capacity signal:
+    measured against every live model it equals the count of `price_sources`
+    exactly. It is here as a cross-check on Scout's own parse, and the UI should
+    not present it as a second opinion.
 
     `max_tokens` is clamped to the same 32–800 range `/api/answer` accepts, so a
     quote here cannot describe a request that endpoint would refuse.
@@ -534,14 +540,14 @@ async def inference_prices(max_tokens: int = 250):
             'models': out,
             'estimated': len(priced),
             'total': len(out),
-            # The gateway's own capacity figure, which is the number worth
-            # quoting: it is a scheduler reading rather than an inference from
-            # who happens to have a listed price.
+            # Equals price_sources per model — a cross-check on Scout's parse,
+            # not an independent capacity reading. Documented as such above.
             'available_miners_by_model': flop_estimate.capacity_by_model(
                 {o['model']: o['estimate'] for o in priced}),
             'note': ('Costs are the FLOP gateway\'s estimate for a probe prompt at this '
-                     'max_tokens, spent from the caller wallet to the miner. Scout\'s own '
-                     'fee is separate — see /api/pricing.')}
+                     'max_tokens, spent from the caller wallet to the miner. Equal to '
+                     'unit price x total tokens. Scout\'s own fee is separate — see '
+                     '/api/pricing.')}
 
 
 @app.get('/api/reliability')

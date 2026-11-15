@@ -11,10 +11,18 @@ useful here:
   * **It needs no key.** The operation inherits the gateway's global security,
     which is `BearerAuth` *or* `X402Payment` — an unauthenticated call returns
     200. Measured 2026-11-15: 200 with no Authorization header at all. So this
-    works while our devnet allowance is dead, which no other FLOP call does.
-  * **It reports `available_miners`.** That is a per-model capacity reading
-    straight from the gateway's own scheduler, not inferred from price_sources
-    the way the router currently guesses it.
+    works while our devnet allowance is dead, which no other FLOP call does.  * **It reports `available_miners`.** Measured 2026-11-15 against all three
+    live models: it equals the count of `x-flop.price_sources` exactly (24/24,
+    6/6, 1/1). So it is *not* an independent capacity signal — it is the same
+    number the router already derives. It is useful as a cross-check that our
+    parse agrees with the gateway's, and that is all it is claimed for here.
+
+What the estimate genuinely adds over `/v1/models` is the arithmetic the unit
+price cannot express: whole-request FLOP cost, token split, GFLOPs and
+`estimated_latency_blocks`. Measured, `estimated_cost_flop` equals
+`pricing.prompt × estimated_total_tokens` to the cent on every model — so the
+gateway is not applying a hidden floor or multiplier, and a caller can trust the
+product. That is worth knowing precisely because it was not documented anywhere.
 
 What it deliberately is not: `/connect/preflight` and `/keys/ephemeral` are the
 endpoints that would let Scout actually constrain the gateway. Both are strictly
@@ -167,9 +175,10 @@ def summarise(payload: dict | None) -> dict | None:
 def capacity_by_model(payloads: dict) -> dict:
     """model id -> available_miners, from a set of cached estimates.
 
-    Used by the router: `price_sources` on /v1/models says who *could* serve a
-    model, which is not the same as who can right now. This is the gateway's own
-    scheduler answer, and it is the first real capacity signal we have had.
+    Measured 2026-11-15 this equals the count of `price_sources` on every live
+    model, so it is a cross-check on the router's parse rather than a new
+    signal. Kept because a disagreement between the two would mean one of them
+    is reading the gateway wrong.
     """
     return {m: p.get('available_miners') for m, p in payloads.items()
             if isinstance(p, dict) and p.get('available_miners') is not None}
