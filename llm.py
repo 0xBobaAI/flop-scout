@@ -5,6 +5,7 @@ import os
 import time
 from pathlib import Path
 
+import flop_gateway
 from flop_gateway import FLOP_URL
 
 BASE = Path(__file__).parent
@@ -81,8 +82,14 @@ async def flop_models(c):
                         'price': f"{m['pricing']['prompt']} FLOP/token", 'capacity_tpm': xf.get('capacity_tpm'),
                         'miners': len(xf.get('price_sources', [])),
                         'blocked': f"flop:{m['id']}" in BLOCKED})
-    except Exception:
-        # Keep the last good catalog rather than emptying the picker
+    except Exception as e:
+        # Keep the last good catalog rather than emptying the picker. The
+        # bare `except Exception` used to hide a NameError here for weeks:
+        # flop_gateway was never imported, so every call raised, returned the
+        # empty catalog, and the picker silently fell back to one hardcoded
+        # stub. A swallowed exception in a catalog loader is indistinguishable
+        # from an empty network, so say which it was.
+        print('flop_models failed:', repr(e))
         return [dict(m, blocked=m['id'] in BLOCKED) for m in _catalog['models']]
     _catalog.update(ts=time.time(), models=out)
     return out
