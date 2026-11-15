@@ -1400,6 +1400,20 @@ def llms_txt():
     return PlainTextResponse(_LLMS_TXT, headers=_SHORT_CACHE)
 
 
+@app.get('/.well-known/mcp/server.json')
+def mcp_server_json():
+    """Registry metadata at the conventional discovery path.
+
+    Served from the file rather than a copy in code, so the published registry
+    entry and what this server actually offers cannot drift apart. `include_in_
+    schema` is off: it is a document, not an API.
+    """
+    f = BASE / 'mcp' / 'server.json'
+    if not f.exists():
+        raise HTTPException(404, {'error': 'not_found', 'path': '/.well-known/mcp/server.json'})
+    return JSONResponse(json.loads(f.read_text(encoding='utf-8')), headers=_SHORT_CACHE)
+
+
 @app.get('/openapi.json', include_in_schema=False)
 def openapi_alias():
     """The conventional path. FastAPI serves the same schema at /api/openapi.json."""
