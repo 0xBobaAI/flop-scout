@@ -79,23 +79,19 @@ assert inf.get("floor"), f"no inference estimate: {inf}"
 print("  quote: %s FLOP fee, miner floor %s FLOP" % (d["total_flop"], inf["floor"]["cost_flop"]))
 ' || fail "/api/quote did not price the request"
 
-# The default --forwarded-allow-ips=127.0.0.1 is what makes client_id() see the
-# caller behind a same-host proxy. Without --proxy-headers every caller lands in
-# one bucket, so assert two XFF values get two budgets and that one is consumed.
-slots() {
-  curl -fsS -o /dev/null -D - -X POST "$BASE/api/quote" \
-    -H 'content-type: application/json' \
-    -H "x-forwarded-for: $1" \
-    -d '{"sources":["keenable"]}' \
-    | grep -i '^x-ratelimit-remaining:' | tr -d '\r' | awk '{print $2}'
-}
-A1=$(slots 203.0.113.1)
-A2=$(slots 203.0.113.1)
-B1=$(slots 198.51.100.7)
-echo "  203.0.113.1 -> $A1 then $A2 | 198.51.100.7 -> $B1"
-[ -n "$A1" ] && [ -n "$B1" ] || fail "no X-RateLimit-remaining header: quota headers are missing"
-[ "$A1" != "$B1" ] || fail "two IPs share one bucket: --proxy-headers is not in effect"
-[ "$A2" -lt "$A1" ] || fail "second call from the same IP did not consume a slot"
+# --proxy-headers is what makes client_id() see the caller behind a same-host
+# proxy; without it every caller shares one rate-limit bucket.
+#
+# /api/quote only reads the quota (peek_quota), it never consumes a slot, so
+# comparing remaining counts across two IPs proves nothing: both are 20. The
+# evidence is what uvicorn records as the peer. With --proxy-headers and
+# --forwarded-allow-ips=127.0.0.1 the access log shows the forwarded address;
+# without them it shows 127.0.0.1 for everything.
+H2=$(curl -fsS -o /dev/null -D - -X POST "$BASE/api/quote"       -H 'content-type: application/json' -H 'x-forwarded-for: 203.0.113.1'       -d '{"sources":["keenable"]}')
+echo "$H2" | grep -qi '^x-ratelimit-remaining:' || fail "no X-RateLimit-remaining header"
+echo "  quote carries X-RateLimit-* headers"
+docker logs "$NAME" 2>&1 | grep -q '203\.0\.113\.1'   || fail "uvicorn did not record the forwarded peer: --proxy-headers is not in effect"
+echo "  uvicorn logged the forwarded peer 203.0.113.1"
 
 UID_IN=$(docker exec "$NAME" id -u)
 [ "$UID_IN" != 0 ] || fail "container runs as root"
