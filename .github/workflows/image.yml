@@ -22,6 +22,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      # The smoke job must test the exact artefact that was pushed, not recompute
+      # the tag from the ref and risk a different answer.
+      tag: ${{ steps.tag.outputs.value }}
     steps:
       - uses: actions/checkout@v4
 
@@ -78,3 +82,15 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Runs the published image rather than a fresh local build, so a cache hit or
+  # a stale layer cannot hide a defect in what consumers actually pull.
+  smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Smoke-test the pushed image
+        run: bash deploy/smoke-image.sh "ghcr.io/${{ github.repository }}:${{ needs.build.outputs.tag }}"
