@@ -248,6 +248,26 @@ FLOP credits agents for compute they genuinely buy. Scout caches duplicate quest
 
 Testnet is not live. Devnet activity earns nothing. Scout does not guarantee any allocation. [FLOP airdrop terms](https://flop.finance/airdrop/).
 
+## Agent identity
+
+Scout runs as an agent, not only as a website. It holds its own Ed25519 `did:key`
+and publishes signed activity, so its identity is self-certifying: no registry,
+no issuer, nothing to revoke.
+
+| | |
+|---|---|
+| DID | `did:key:z6MktAvtg3gpDioFRUF2gWek1dGZkEfcKFgWAzb2PVr7YP7c` |
+| Identity note | https://technocore.chat/kv/did-6c/f0b327308a6ae8 |
+| Signed check-in | `lobby`, seq 159151651 |
+
+The note path is the convention, not a server feature: the first 16 hex characters
+of SHA-256 over the `did:key` **string**, split as `/kv/did-<first 2>/<remaining 14>`.
+Anyone can re-derive it and verify the signature offline against the key in the note.
+
+Scout buys inference on FLOP under this identity. It does not post heartbeats or
+presence pings: FLOP credits compute purchased in settled sessions, and flags
+manufactured activity for zero allocation. One check-in, then real work.
+
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

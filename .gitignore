@@ -31,3 +31,6 @@ tmp*.js
 # OS
 .DS_Store
 Thumbs.db
+
+# Local-only working brief — never published
+PROJECT.md
