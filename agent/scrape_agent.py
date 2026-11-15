@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Flop Scout — scrape agent
+Flop Scout -- scrape agent
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 Autonomous agent that sends jobs to the Scout API, records results, and reports
 a simple cost/quality summary.  Requires no LLM orchestrator: it drives the
@@ -8,7 +8,7 @@ Scout MCP endpoints directly over HTTP.
 
 Usage
 -----
-  # basic — read jobs from a JSON file, write results to results.jsonl
+  # basic -- read jobs from a JSON file, write results to results.jsonl
   python scrape_agent.py jobs.example.json
 
   # custom output file
@@ -61,7 +61,7 @@ import urllib.request
 from pathlib import Path
 
 
-# ── helpers ───────────────────────────────────────────────────────────────────
+# --- helpers -------------------------------------------------------
 
 def _post(base: str, path: str, payload: dict, timeout: float = 90) -> dict:
     url = base.rstrip('/') + path
@@ -87,7 +87,7 @@ def _get(base: str, path: str, timeout: float = 30) -> dict:
         return json.load(resp)
 
 
-# ── preflight ─────────────────────────────────────────────────────────────────
+# --- preflight -------------------------------------------------------
 
 def preflight(base: str) -> dict:
     """Check the Scout instance is reachable and return its pricing + catalog."""
@@ -103,17 +103,18 @@ def preflight(base: str) -> dict:
         print(f'[preflight] /api/catalog failed (non-fatal): {exc}', file=sys.stderr)
         catalog = {}
 
-    mode = pricing.get('metering', {}).get('mode', 'unknown')
+    metering_raw = pricing.get('metering', 'unknown')
+    mode = metering_raw if isinstance(metering_raw, str) else metering_raw.get('mode', 'unknown')
     sources = [s['id'] for s in catalog.get('sources', [])]
     models  = [m['model'] for m in catalog.get('models', [])]
 
     print(f'[preflight] metering={mode}  sources={len(sources)}  models={len(models)}')
     if mode == 'nominal':
-        print('[preflight] NOTE: devnet — charges computed but nothing debited')
+        print('[preflight] NOTE: devnet -- charges computed but nothing debited')
     return {'pricing': pricing, 'catalog': catalog}
 
 
-# ── quote ─────────────────────────────────────────────────────────────────────
+# --- quote -------------------------------------------------------
 
 def quote_job(base: str, job: dict) -> dict:
     """Get a price estimate for a job without running it."""
@@ -127,7 +128,7 @@ def quote_job(base: str, job: dict) -> dict:
     return _post(base, '/api/quote', payload, timeout=60)
 
 
-# ── run ───────────────────────────────────────────────────────────────────────
+# --- run -------------------------------------------------------
 
 def run_job(base: str, job: dict) -> dict:
     """Run one job through scout_answer and return a normalised result dict."""
@@ -156,22 +157,39 @@ def run_job(base: str, job: dict) -> dict:
             'error':          str(exc),
         }
 
-    inf = resp.get('inference_estimate') or {}
-    inf_flop = (inf.get('floor') or {}).get('cost_flop')
+    # The API returns 'answers' (list of per-engine attempts) not a single 'answer'.
+    # Pick the first successful attempt; fall back to the first entry if all failed.
+    answers = resp.get('answers') or []
+    best = next((a for a in answers if not a.get('error')), None)
+    if best is None and answers:
+        best = answers[0]  # all failed; surface the error
+
+    answer_text = (best or {}).get('answer') or (best or {}).get('text') or ''
+    answer_error = (best or {}).get('error')
+
+    # citations come from search items, not from the answer itself
+    items = resp.get('items') or []
+    citations = [{'url': it.get('url'), 'title': it.get('title'), 'snippet': it.get('snippet')}
+                 for it in items if it.get('url')]
+
+    # charged_flop and inference_estimate are inside each answer attempt
+    charged = (best or {}).get('scout_charge_flop')
+    inf_est = (best or {}).get('inference_estimate') or {}
+    inf_flop = (inf_est.get('floor') or {}).get('cost_flop')
 
     return {
         'label':          label,
         'q':              q,
-        'answer':         resp.get('answer', ''),
-        'citations':      resp.get('citations', []),
-        'charged_flop':   resp.get('charged_flop'),
+        'answer':         answer_text,
+        'citations':      citations,
+        'charged_flop':   charged,
         'inference_flop': inf_flop,
         'latency_s':      round(time.monotonic() - t0, 2),
-        'error':          resp.get('error'),
+        'error':          answer_error,
     }
 
 
-# ── utils ─────────────────────────────────────────────────────────────────────
+# --- utils -------------------------------------------------------
 
 def _build_q(job: dict) -> str:
     """Compose the question string from job fields."""
@@ -190,7 +208,7 @@ def _auto_label(q: str) -> str:
     return q[:40].replace(' ', '-').lower().rstrip('-')
 
 
-# ── summary ───────────────────────────────────────────────────────────────────
+# --- summary -------------------------------------------------------
 
 def print_summary(results: list[dict]) -> None:
     ok      = [r for r in results if not r['error']]
@@ -199,7 +217,7 @@ def print_summary(results: list[dict]) -> None:
     total_inference = sum(r['inference_flop'] or 0 for r in ok)
     avg_lat = (sum(r['latency_s'] for r in ok) / len(ok)) if ok else 0
 
-    print('\n── Summary ─────────────────────────────────────────')
+    print('\n-- Summary ------------------------------------------')
     print(f'  jobs:            {len(results)}  ({len(ok)} ok, {len(failed)} failed)')
     print(f'  charged FLOP:    {total_charged:.4f}')
     print(f'  inference est.:  {total_inference:.4f}')
@@ -208,10 +226,10 @@ def print_summary(results: list[dict]) -> None:
         print(f'  failed jobs:')
         for r in failed:
             print(f'    [{r["label"]}] {r["error"]}')
-    print('────────────────────────────────────────────────────')
+    print('----------------------------------------------------')
 
 
-# ── main ──────────────────────────────────────────────────────────────────────
+# --- main -------------------------------------------------------
 
 def main() -> None:
     parser = argparse.ArgumentParser(description='Flop Scout scrape agent')
