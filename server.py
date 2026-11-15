@@ -1400,6 +1400,21 @@ def llms_txt():
     return PlainTextResponse(_LLMS_TXT, headers=_SHORT_CACHE)
 
 
+@app.get('/.well-known/mcp-registry-auth')
+def mcp_registry_auth():
+    """Domain-ownership proof for the official MCP Registry.
+
+    The registry fetches this exact path over HTTPS, refuses redirects and caps
+    the body at 4096 bytes, so it is served as plain text from a file with no
+    wrapper. The matching private key never leaves the publisher's machine and
+    is not in this repo.
+    """
+    f = BASE / 'mcp' / 'registry-auth'
+    if not f.exists():
+        raise HTTPException(404, {'error': 'not_found'})
+    return PlainTextResponse(f.read_text(encoding='utf-8'), headers=_SHORT_CACHE)
+
+
 @app.get('/.well-known/mcp/server.json')
 def mcp_server_json():
     """Registry metadata at the conventional discovery path.
