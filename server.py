@@ -1356,7 +1356,11 @@ Scout's own fee and the miner's inference cost are always reported as two separa
 - GET {SITE}/api/router: miners ranked by settlement rate and local success
 - GET {SITE}/api/miners: every registered miner with GPU, stake and 24h settlement delta
 - GET {SITE}/api/miners/{{address}}/history: one miner's settlement history, up to 30 days
-- POST {SITE}/api/alerts: get notified when a miner's settle rate drops below a threshold
+- POST {SITE}/api/alerts: subscribe to a settle-rate drop. Fields: `address` (SS58 or `*`), `threshold` (0–1), `channel` (`site` | `telegram`), `handle`
+- GET {SITE}/api/alerts/check: read triggered alerts back. `channel: "site"` delivers nothing on its own, you poll this
+- DELETE {SITE}/api/alerts/{{id}}: unsubscribe
+- GET {SITE}/api/reliability: settlement-rate deltas for every miner over a window
+- GET {SITE}/api/health: liveness, metering mode, whether the gateway accepts the key
 
 ## Limits
 
