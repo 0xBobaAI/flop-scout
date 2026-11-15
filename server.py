@@ -1288,6 +1288,12 @@ async def _not_found(request: Request, exc):
     return HTMLResponse(html, status_code=404)
 
 
+# Cloudflare caches .txt by default and keeps a stale copy for hours. These files
+# describe the site to crawlers and agents, so a wrong one costs more than a
+# few extra origin hits.
+_SHORT_CACHE = {'Cache-Control': 'public, max-age=300'}
+
+
 @app.get('/robots.txt')
 def robots():
     # /api/ used to be disallowed, which hid the API from exactly the readers it
@@ -1295,7 +1301,8 @@ def robots():
     # cached read; the paid endpoints are POST and rate-limited per caller.
     return PlainTextResponse(
         'User-agent: *\nAllow: /\n\n'
-        f'Sitemap: {SITE}/sitemap.xml\n')
+        f'Sitemap: {SITE}/sitemap.xml\n',
+        headers=_SHORT_CACHE)
 
 
 _LLMS_TXT = f'''# Flop Scout
@@ -1339,7 +1346,7 @@ Scout's own fee and the miner's inference cost are always reported as two separa
 
 @app.get('/llms.txt')
 def llms_txt():
-    return PlainTextResponse(_LLMS_TXT)
+    return PlainTextResponse(_LLMS_TXT, headers=_SHORT_CACHE)
 
 
 @app.get('/openapi.json', include_in_schema=False)
