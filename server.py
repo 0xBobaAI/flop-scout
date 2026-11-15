@@ -37,6 +37,7 @@ import layout
 import flop_gateway
 import flop_estimate
 import llm
+import mcp_server
 import pricing
 import src_router as router
 from registry import PRESETS, SOURCES
@@ -1105,8 +1106,7 @@ async def miner_explorer():
     }
 
 
-@app.get('/api/miners/{address}/history')
-def miner_history(address: str, window: int = 604800, points: int = 96):
+def _miner_history(address: str, window: int = 604800, points: int = 96) -> dict:
     """One miner's settlement history from Scout's own snapshots.
 
     Reads the local `reliability` table only, so it never touches the gateway and
@@ -1116,7 +1116,11 @@ def miner_history(address: str, window: int = 604800, points: int = 96):
     last point always matches the 24h figure for that miner.
 
     Returns the raw cumulative counters too, so a caller can compute its own
-    rates instead of trusting ours.
+    rates instead of trusting ours. Shared by the HTTP route and the MCP server
+    so the two cannot disagree.
+
+    Raises LookupError when the miner has no snapshots; the HTTP layer turns
+    that into 404 and MCP into a tool error.
     """
     window = max(3600, min(window, 30 * 86400))
     points = max(2, min(points, 500))
@@ -1125,8 +1129,8 @@ def miner_history(address: str, window: int = 604800, points: int = 96):
         rows = db.execute('select ts, settled, timeout from reliability where miner = ? and ts >= ? order by ts',
                           (address, start)).fetchall()
     if not rows:
-        raise HTTPException(404, {'error': 'no_history', 'message': 'No snapshots for this miner yet. '
-                                 'Snapshots are written every 15 minutes while the miner is in the registry.'})
+        raise LookupError('No snapshots for this miner yet. '
+                          'Snapshots are written every 15 minutes while the miner is in the registry.')
     # Thin the series to at most `points` samples, always keeping the first and last.
     step = max(1, (len(rows) + points - 1) // points)
     picked = rows[::step]
@@ -1157,6 +1161,14 @@ def miner_history(address: str, window: int = 604800, points: int = 96):
         'note': 'settle_rate at each point is measured from the first snapshot in the window. '
                 'Snapshots are 15 minutes apart; a short span means a short history, not a stable rate.',
     }
+
+
+@app.get('/api/miners/{address}/history')
+def miner_history(address: str, window: int = 604800, points: int = 96):
+    try:
+        return _miner_history(address, window, points)
+    except LookupError as e:
+        raise HTTPException(404, {'error': 'no_history', 'message': str(e)})
 
 
 @app.get('/api/miners/{address}')
@@ -1500,6 +1512,48 @@ async def analytics_page():
 @app.get('/')
 async def index():
     return await _render('/')
+
+
+# ── MCP (remote server) ──────────────────────────────────────────────────────
+# Streamable HTTP: one POST endpoint speaking JSON-RPC 2.0. Statelessness is
+# deliberate — no Mcp-Session-Id, no SSE stream — so every request is answered
+# with a single JSON object and nothing has to be held in memory between calls.
+# That costs us server-initiated requests (sampling, elicitation), which Scout
+# has no use for.
+
+
+@app.post('/mcp')
+async def mcp_endpoint(request: Request):
+    body = await request.json()
+    # request.client.host is already the real peer: uvicorn runs with
+    # --proxy-headers and trusts 127.0.0.1, so nginx's appended $remote_addr
+    # wins over anything the client put in the header. The inner call forwards
+    # it as X-Forwarded-For so the per-caller quota applies to this client.
+    peer = (request.client.host if request.client else '') or '127.0.0.1'
+    # A batch is JSON-RPC 2.0 but not MCP: MCP allows one message per POST.
+    if isinstance(body, list):
+        return JSONResponse({'jsonrpc': '2.0', 'id': None,
+                             'error': {'code': -32600,
+                                       'message': 'Batch requests are not supported; send one message per POST'}},
+                            status_code=400)
+    status, reply = await mcp_server.handle(app, body, peer)
+    if reply is None:
+        return Response(status_code=202)
+    return JSONResponse(reply, status_code=status,
+                        headers={'Mcp-Protocol-Version': mcp_server.SUPPORTED[0]})
+
+
+@app.api_route('/mcp', methods=['GET', 'DELETE', 'PUT', 'PATCH'])
+async def mcp_unsupported(request: Request):
+    # GET would open an SSE stream and DELETE would end a session. Neither
+    # exists here, so say so instead of 404-ing: a client that sees 405 learns
+    # the server is stateless, a client that sees 404 thinks it is missing.
+    return JSONResponse({'error': 'not_supported',
+                         'message': 'This MCP server is stateless Streamable HTTP: POST a single '
+                                    'JSON-RPC message to /mcp. No SSE stream or session is offered.',
+                         'hint': 'tools/list over POST returns the whole tool surface'},
+                        status_code=405,
+                        headers={'Allow': 'POST'})
 
 
 # Bound last: the filter walks app.routes, so every route must exist first.
