@@ -65,7 +65,15 @@ install -m 644 "$APP_DIR/deploy/flop-scout-renew.service"  /etc/systemd/system/
 install -m 644 "$APP_DIR/deploy/flop-scout-renew.timer"    /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now flop-scout.service
-systemctl enable --now flop-scout-renew.timer
+
+# The renew timer is installed but NOT enabled. A devnet allowance is
+# once-per-wallet and expires in under 24h (we measured 15h 4m), and the published
+# contract says an expired allowance is never renewed by re-enrolling. So on a
+# spent wallet this timer can only log 403 devnet_enrollment_expired forever.
+# Enable it only for a wallet that has never enrolled — after that it is one-shot.
+#   systemctl enable --now flop-scout-renew.timer
+#   systemctl start  flop-scout-renew.service   # run once, now
+# On testnet, where renewal is expected to be possible, re-evaluate this.
 
 say 'Installing the nginx site'
 install -m 644 "$APP_DIR/deploy/nginx-flop-scout.conf" /etc/nginx/sites-available/flop-scout
@@ -93,8 +101,8 @@ Flop Scout is installed.
   Useful commands
     sudo systemctl status flop-scout
     sudo journalctl -u flop-scout -f
-    sudo systemctl list-timers flop-scout-renew.timer
-    sudo systemctl start flop-scout-renew.service   # renew key now
+    sudo systemctl list-timers flop-scout-renew.timer   # disabled by default
+    sudo systemctl start flop-scout-renew.service       # enroll a fresh wallet once
 
   The app listens on 127.0.0.1:8787 behind nginx.
 ────────────────────────────────────────────────────────────
