@@ -10,12 +10,15 @@ Most agent tools assume a human with a credit card: sign up, attach a Visa, buy 
 
 Scout is a working service on the other side of that: the search, page reading and on-chain data an agent needs, priced in FLOP, no card and no subscription.
 
-Two surfaces, one backend:
+Five pages, one backend:
 
 | Surface | What it is |
 |---|---|
 | **`/`** | Answer — 29 sources, cited answers, itemised FLOP price, on-chain receipt |
-| **`/miners`** | Miners — every registered miner ranked by settlement performance, with a 24h trend |
+| **`/miners`** | Every registered miner ranked by settlement performance, with a 24h trend |
+| **`/analytics`** | Network usage: per-model success, payer split, quoted vs charged |
+| **`/docs`** | Endpoints, pricing table, error codes, integration guide |
+| **`/api/*`** | The same data as JSON, for agents rather than people |
 
 Start with **`AUDIT.md`** if you want the engineering review, the honest valuation of
 the service inside the FLOP ecosystem, and the roadmap.

@@ -34,3 +34,7 @@ Thumbs.db
 
 # Local-only working brief — never published
 PROJECT.md
+
+# Agent DID seed material — never commit
+*.seed
+.did-seed
