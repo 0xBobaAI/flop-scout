@@ -92,5 +92,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # metadata-action normalises the pushed ref to lowercase, so GITHUB_REPOSITORY
+      # cannot be used as-is: ghcr.io/0xBobaAI/... is an invalid reference and the
+      # pull fails before anything is tested. Derive the same form it published.
+      - name: Resolve the published image reference
+        id: img
+        run: echo "ref=ghcr.io/${GITHUB_REPOSITORY,,}:${{ needs.build.outputs.tag }}" >> "$GITHUB_OUTPUT"
+
       - name: Smoke-test the pushed image
-        run: bash deploy/smoke-image.sh "ghcr.io/${{ github.repository }}:${{ needs.build.outputs.tag }}"
+        run: bash deploy/smoke-image.sh "${{ steps.img.outputs.ref }}"

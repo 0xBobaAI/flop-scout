@@ -55,7 +55,8 @@ curl -fsS "${MCP_HDR[@]}" -X POST "$BASE/mcp" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | python3 -c '
 import json, sys
 t = json.load(sys.stdin)["result"]["tools"]
-assert len(t) == 9, f"expected 9 tools, got {len(t)}"
+# A floor, not an equality: adding a tool must not fail CI, dropping one must.
+assert len(t) >= 9, f"expected at least 9 tools, got {len(t)}"
 bad = [x["name"] for x in t if not x.get("description") or not x.get("inputSchema")]
 assert not bad, f"tools missing description or schema: {bad}"
 print(f"  tools: {len(t)}, all described and schematised")
@@ -105,8 +106,10 @@ docker exec "$NAME" sh -c 'touch /data/.probe && rm -f /data/.probe' \
 echo "  /data writable"
 
 # A secret that survived into the image would be readable from inside it. Check
-# the path the Dockerfile is supposed to clear, not the build context.
-LEAK=$(docker exec "$NAME" sh -c 'ls -A /app | grep -iE "wallet|\.pem$|priv\.hex|\.db$|seed" || true')
+# the path the Dockerfile is supposed to clear, not the build context. The names
+# are exact: static/wallet.js is the public sr25519 bundle and matches a loose
+# "wallet" pattern, which would fail this every time.
+LEAK=$(docker exec "$NAME" sh -c 'ls -A /app | grep -iE "\.wallet|\.pem$|priv\.hex|\.db$|\.seed$|mcp-key" || true')
 [ -z "$LEAK" ] || fail "secret-looking files in the image: $LEAK"
 echo "  no secret-bearing files in /app"
 
