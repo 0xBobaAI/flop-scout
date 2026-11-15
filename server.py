@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field, field_validator
 
 import layout
 import flop_gateway
+import flop_estimate
 import llm
 import pricing
 import src_router as router
@@ -135,6 +136,12 @@ class QuoteReq(BaseModel):
     compare_model: str | None = None
     cache_hit: bool = False
     keys: dict[str, str] = {}    # only presence is read, to report the right quota tier
+    # Optional: adds the *miner's* cost to the quote, from the gateway's own
+    # zero-spend estimator. Without a question there is nothing to count tokens
+    # over, so this stays None rather than 0 — see flop_estimate.
+    q: str | None = Field(None, max_length=500)
+    model: str = 'flop:qwen/qwen2.5-0.5b-instruct'
+    max_tokens: int = Field(250, ge=32, le=800)
 
 
 # ── Auto source choice ──────────────────────────────────────────────────────
@@ -341,11 +348,16 @@ async def catalog():
 
 
 @app.post('/api/quote')
-def quote_preview(req: QuoteReq, request: Request, response: Response):
+async def quote_preview(req: QuoteReq, request: Request, response: Response):
     """Price a request before spending anything — no search, no inference, no ledger row.
 
     An agent that cannot read a price before committing is not autonomous, it is
     optimistic. This is the cheapest endpoint on the box.
+
+    With `q` supplied it also reports the *miner's* inference cost, from the
+    gateway's own estimator. That call needs no key and spends nothing, so the
+    two numbers Scout has always kept apart are shown here side by side before
+    anything happens at all.
     """
     # auto quotes as the keenable floor: auto only adds free sources, so the total is exact either way
     explicit = [s for s in req.sources if s in SOURCES][:6]
@@ -355,7 +367,21 @@ def quote_preview(req: QuoteReq, request: Request, response: Response):
     own = bool((req.keys.get('flop') or '').strip() or (req.keys.get('openrouter') or '').strip())
     quota = peek_quota(client_id(request), own)
     _quota_headers(response, quota)
+
+    inference = None
+    if req.q and req.q.strip() and req.model.startswith('flop:'):
+        # The same messages the answer path would build, so the token count is
+        # the real one. Sources are empty here: a quote cannot know what search
+        # will return, and pretending otherwise would understate the prompt.
+        msgs = llm.build_messages(req.q, [])
+        est = await flop_estimate.estimate(client, req.model.split(':', 1)[1], msgs, req.max_tokens)
+        inference = flop_estimate.summarise(est)
+
     return {**q, 'sources': srcs, 'quota': quota,
+            'inference': inference,
+            'inference_note': (None if inference is None else
+                               'Miner cost, estimated by the FLOP gateway for this prompt. '
+                               'Separate from Scout\'s fee above, and spent from the caller wallet to the miner.'),
             'limits': {'sources': 6, 'n': {'min': 1, 'max': 8}, 'max_tokens': {'min': 32, 'max': 800},
                        'q_chars': {'min': 2, 'max': 500}},
             'note': ('Charges are nominal on devnet: computed, displayed and logged, never debited.'
@@ -399,8 +425,16 @@ async def answer(req: AnswerReq, request: Request, response: Response):
     if merged:
         msgs = llm.build_messages(req.q, merged)
         models = [req.model] + ([req.compare_model] if compare else [])
+        # Price the inference before sending it, from the gateway's zero-spend
+        # estimator. It needs no key, so this works on a dead allowance, and it
+        # puts the miner's number on the receipt next to Scout's instead of
+        # leaving the caller to discover it afterwards.
+        ests = await asyncio.gather(*[
+            flop_estimate.estimate(client, m.split(':', 1)[1], msgs, req.max_tokens)
+            if m.startswith('flop:') else None for m in models])
         answers = await asyncio.gather(*[llm.complete(client, m, msgs, req.max_tokens, keys) for m in models])
-        for res in answers:
+        for res, est in zip(answers, ests):
+            res['inference_estimate'] = flop_estimate.summarise(est)
             res['paid_by'] = 'user' if (res.get('engine') == 'flop' and keys.get('flop')) or res.get('engine') == 'openrouter' else 'scout'
             # Scout's own charge for the service, separate from the miner's
             # inference cost. `quoted` is always the computed price; `charge` is
@@ -458,6 +492,51 @@ async def router_state():
     else:
         asyncio.create_task(router.refresh(client))
     return snap
+
+
+@app.get('/api/inference-prices')
+async def inference_prices(max_tokens: int = 250):
+    """What every FLOP model costs to run, from the gateway's own estimator.
+
+    Three things this gives that `/v1/models` does not:
+
+    * the gateway's `available_miners` per model — its scheduler's answer, not
+      Scout counting `price_sources` entries;
+    * a whole-request FLOP cost, not a per-token unit price an agent has to do
+      arithmetic on;
+    * it costs nothing and needs no key, so it answers while the devnet
+      allowance is dead.
+
+    `max_tokens` is clamped to the same 32–800 range `/api/answer` accepts, so a
+    quote here cannot describe a request that endpoint would refuse.
+    """
+    max_tokens = max(32, min(max_tokens, 800))
+    models = await llm.flop_models(client)
+    probe = [{'role': 'system', 'content': llm.SYSTEM},
+             {'role': 'user', 'content': 'How many miners are online on the FLOP network right now?'}]
+    ests = await asyncio.gather(*[
+        flop_estimate.estimate(client, m['model'], probe, max_tokens) for m in models])
+    out = []
+    for m, est in zip(models, ests):
+        s = flop_estimate.summarise(est)
+        out.append({'model': m['model'], 'label': m.get('label'),
+                    'price_per_token': m.get('price'), 'capacity_tpm': m.get('capacity_tpm'),
+                    'miners_priced': m.get('miners'), 'blocked': m.get('blocked'),
+                    'estimate': s})
+    priced = [o for o in out if o['estimate']]
+    return {'max_tokens': max_tokens,
+            'metering': pricing.METERING,
+            'models': out,
+            'estimated': len(priced),
+            'total': len(out),
+            # The gateway's own capacity figure, which is the number worth
+            # quoting: it is a scheduler reading rather than an inference from
+            # who happens to have a listed price.
+            'available_miners_by_model': flop_estimate.capacity_by_model(
+                {o['model']: o['estimate'] for o in priced}),
+            'note': ('Costs are the FLOP gateway\'s estimate for a probe prompt at this '
+                     'max_tokens, spent from the caller wallet to the miner. Scout\'s own '
+                     'fee is separate — see /api/pricing.')}
 
 
 @app.get('/api/reliability')
