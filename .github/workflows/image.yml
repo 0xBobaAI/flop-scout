@@ -45,8 +45,8 @@ jobs:
           echo "server.json name=$NAME version=$VERSION"
           echo "Dockerfile label=$LABEL"
           [ "$NAME" = "$LABEL" ] || { echo "::error::label and server.json name differ"; exit 1; }
-          [ "$VERSION" = "${{ steps.tag.value }}" ] || \
-            { echo "::error::server.json version $VERSION != image tag ${{ steps.tag.value }}"; exit 1; }
+          [ "$VERSION" = "${{ steps.tag.outputs.value }}" ] || \
+            { echo "::error::server.json version $VERSION != image tag ${{ steps.tag.outputs.value }}"; exit 1; }
 
       - uses: docker/setup-buildx-action@v3
 
@@ -61,7 +61,7 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=${{ steps.tag.value }}
+            type=raw,value=${{ steps.tag.outputs.value }}
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push
