@@ -74,6 +74,7 @@ DOCS = {
 <tr><td class="mono">GET /api/router</td><td>live miner ranking with scores</td></tr>
 <tr><td class="mono">GET /api/miners</td><td>every miner with GPU, stake, router score and 24h settlement delta</td></tr>
 <tr><td class="mono">GET /api/miners/{address}</td><td>one miner, same shape as a row</td></tr>
+<tr><td class="mono">GET /api/miners/{address}/history</td><td>one miner's settlement history from Scout's own snapshots. <code>window</code> in seconds (default 7 days, max 30). Never touches the gateway</td></tr>
 <tr><td class="mono">GET /api/reliability</td><td>settlement-rate deltas per miner over a window (default 24h)</td></tr>
 <tr><td class="mono">GET /api/inference-prices</td><td>every FLOP model priced as a whole request — FLOP cost, tokens, GFLOPs, latency blocks — by the gateway's own estimator. Needs no key, spends nothing</td></tr>
 </tbody></table></div>

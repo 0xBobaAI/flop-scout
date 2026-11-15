@@ -994,6 +994,60 @@ async def miner_explorer():
     }
 
 
+@app.get('/api/miners/{address}/history')
+def miner_history(address: str, window: int = 604800, points: int = 96):
+    """One miner's settlement history from Scout's own snapshots.
+
+    Reads the local `reliability` table only, so it never touches the gateway and
+    answers in milliseconds. `window` defaults to 7 days and is capped at the 30
+    days the table keeps. `settle_rate` at each point is the rate over the window
+    *up to* that snapshot, the same definition the miners page prints, so the
+    last point always matches the 24h figure for that miner.
+
+    Returns the raw cumulative counters too, so a caller can compute its own
+    rates instead of trusting ours.
+    """
+    window = max(3600, min(window, 30 * 86400))
+    points = max(2, min(points, 500))
+    start = time.time() - window
+    with db_lock:
+        rows = db.execute('select ts, settled, timeout from reliability where miner = ? and ts >= ? order by ts',
+                          (address, start)).fetchall()
+    if not rows:
+        raise HTTPException(404, {'error': 'no_history', 'message': 'No snapshots for this miner yet. '
+                                 'Snapshots are written every 15 minutes while the miner is in the registry.'})
+    # Thin the series to at most `points` samples, always keeping the first and last.
+    step = max(1, (len(rows) + points - 1) // points)
+    picked = rows[::step]
+    if picked[-1] is not rows[-1]:
+        picked.append(rows[-1])
+    first_s, first_t = rows[0][1], rows[0][2]
+    series = []
+    for ts, s, t in picked:
+        sessions = (s - first_s) + (t - first_t)
+        series.append({
+            'ts': round(ts),
+            'settled': s, 'timeouts': t,
+            'window_sessions': sessions,
+            'settle_rate': round((s - first_s) / sessions, 3) if sessions > 0 else None,
+        })
+    last_ts, last_s, last_t = rows[-1]
+    sessions_total = (last_s - first_s) + (last_t - first_t)
+    return {
+        'address': address,
+        'window_s': window,
+        'snapshots': len(rows),
+        'span_s': round(last_ts - rows[0][0]),
+        'first_ts': round(rows[0][0]),
+        'last_ts': round(last_ts),
+        'settle_rate': round((last_s - first_s) / sessions_total, 3) if sessions_total > 0 else None,
+        'sessions': sessions_total,
+        'series': series,
+        'note': 'settle_rate at each point is measured from the first snapshot in the window. '
+                'Snapshots are 15 minutes apart; a short span means a short history, not a stable rate.',
+    }
+
+
 @app.get('/api/miners/{address}')
 async def miner_detail(address: str):
     """One miner, same shape as a row on /api/miners. Agents should not have to
