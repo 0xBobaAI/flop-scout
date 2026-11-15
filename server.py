@@ -26,6 +26,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
                               RedirectResponse, Response)
@@ -72,7 +73,28 @@ app.add_middleware(CORSMiddleware,
                        'CORS_ORIGINS',
                        'https://flopscout.com,https://www.flopscout.com,http://127.0.0.1:8787,http://localhost:8787',
                    ).split(',') if o.strip()],
-                   allow_methods=['GET', 'POST'], allow_headers=['*'])
+                   allow_methods=['GET', 'POST', 'DELETE'], allow_headers=['*'])
+
+# The generated schema is an agent-facing contract, and FastAPI puts every
+# route in it by default: the HTML pages, /sitemap.xml, /favicon.ico. A client
+# that loads the schema to learn the API would find twelve entries that are
+# web pages and try to parse HTML out of them. Keep /api/ only, and attach the
+# llms.txt pointer so the two discovery surfaces agree.
+def _custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(title=app.title, version=app.version,
+                         routes=app.routes,
+                         description=('Web search, page reading and FLOP network data for AI agents, '
+                                      'priced per call in FLOP. Miner reliability ranking with '
+                                      'settle-rate alerts. Human guide: https://flopscout.com/llms.txt'))
+    keep = {p: ops for p, ops in schema['paths'].items() if p.startswith('/api/')}
+    schema['paths'] = keep
+    schema['servers'] = [{'url': SITE}]
+    schema['externalDocs'] = {'description': 'Guide for agents', 'url': f'{SITE}/llms.txt'}
+    app.openapi_schema = schema
+    return app.openapi_schema
+
 app.mount('/static', StaticFiles(directory=BASE / 'static'), name='static')
 # An honest, identifiable User-Agent. Some upstreams answer 403 to Python's
 # default agent (observed on api.flop.network for urllib); being explicit also
@@ -1474,3 +1496,7 @@ async def analytics_page():
 @app.get('/')
 async def index():
     return await _render('/')
+
+
+# Bound last: the filter walks app.routes, so every route must exist first.
+app.openapi = _custom_openapi
