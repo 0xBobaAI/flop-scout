@@ -1262,15 +1262,25 @@ def check_alerts(address: str = '*', limit: int = 100):
         if address == '*':
             rows = db.execute(
                 'select id, address, threshold, channel, handle, last_rate, fired_at, active '
-                'from miner_alerts order by created_at desc limit ?', (limit,)).fetchall()
+                'from miner_alerts where active = 1 order by created_at desc limit ?', (limit,)).fetchall()
         else:
             rows = db.execute(
                 'select id, address, threshold, channel, handle, last_rate, fired_at, active '
-                'from miner_alerts where address = ? or address = "*" order by created_at desc limit ?',
+                'from miner_alerts where active = 1 and (address = ? or address = "*") '
+                'order by created_at desc limit ?',
                 (address, limit)).fetchall()
         db.commit()
     keys = ('id', 'address', 'threshold', 'channel', 'handle', 'last_rate', 'fired_at', 'active')
-    return {'alerts': [dict(zip(keys, r)) for r in rows]}
+    out = []
+    for r in rows:
+        a = dict(zip(keys, r))
+        # This route is public and unauthenticated, so it must not hand every
+        # subscriber's Telegram id or @username to whoever asks. The owner knows
+        # their own handle; everyone else gets only enough to tell rows apart.
+        h = a['handle'] or ''
+        a['handle'] = (h[:2] + '***') if len(h) > 2 else ('***' if h else '')
+        out.append(a)
+    return {'alerts': out}
 
 
 @app.delete('/api/alerts/{alert_id}')
