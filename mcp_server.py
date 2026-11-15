@@ -45,7 +45,8 @@ TOOLS = [
          'sources': _SOURCES,
          'q': {'type': 'string', 'description': 'The question, to size the inference estimate.'},
          'model': {'type': 'string', 'description': 'e.g. flop:qwen/qwen2.5-0.5b-instruct'},
-         'max_tokens': {'type': 'integer', 'minimum': 32, 'maximum': 800}}}},
+         'max_tokens': {'type': 'integer', 'minimum': 32, 'maximum': 800}}},
+     'annotations': {'readOnlyHint': True, 'idempotentHint': True, 'openWorldHint': True}},
     {'name': 'scout_answer',
      'description': 'Search the chosen sources, synthesise a cited answer, and return an itemised price. '
                     'The response contains answer (text), citations (list of {url, title, snippet}), '
@@ -59,32 +60,37 @@ TOOLS = [
          'n': {'type': 'integer', 'minimum': 1, 'maximum': 8, 'description': 'results per source'},
          'max_tokens': {'type': 'integer', 'minimum': 32, 'maximum': 800},
          'keys': {'type': 'object', 'additionalProperties': {'type': 'string'},
-                  'description': 'Provider keys keyed by name (flop, openrouter, exa …). Never stored or logged.'}}}},
+                  'description': 'Provider keys keyed by name (flop, openrouter, exa …). Never stored or logged.'}}},
+     'annotations': {'readOnlyHint': True, 'idempotentHint': False, 'openWorldHint': True}},
     {'name': 'scout_catalog',
      'description': 'List every source (web, scholar, news …), preset bundle, and inference model available. '
                     'Returns sources (id, label, free flag), presets (id, included sources), and models '
                     '(model id, provider, context window). Call once to discover valid values for the '
                     'sources and model parameters of scout_quote and scout_answer.',
-     'inputSchema': {'type': 'object', 'properties': {}}},
+     'inputSchema': {'type': 'object', 'properties': {}},
+     'annotations': {'readOnlyHint': True, 'idempotentHint': True, 'openWorldHint': False}},
     {'name': 'scout_pricing',
      'description': 'Return the full Scout price list: cost per source call, per page read, per token, '
                     'and the base fee — all in FLOP. Also reports metering_mode ("nominal" on devnet means '
                     'charges are computed and shown but never debited) and which endpoints are healthy. '
                     'Call to show the user current rates or to verify the service is operational before a workflow.',
-     'inputSchema': {'type': 'object', 'properties': {}}},
+     'inputSchema': {'type': 'object', 'properties': {}},
+     'annotations': {'readOnlyHint': True, 'idempotentHint': True, 'openWorldHint': False}},
     {'name': 'flop_inference_prices',
      'description': 'Return every live FLOP inference model with the gateway\'s cost estimate for one request: '
                     'cost_flop, input_tokens, output_tokens, gflops, latency_blocks. Needs no key and spends nothing. '
                     'Use to compare miner inference costs before choosing a model for scout_answer, or to '
                     'show the user what running a FLOP model costs at the network level.',
      'inputSchema': {'type': 'object', 'properties': {
-         'max_tokens': {'type': 'integer', 'minimum': 32, 'maximum': 800}}}},
+         'max_tokens': {'type': 'integer', 'minimum': 32, 'maximum': 800}}},
+     'annotations': {'readOnlyHint': True, 'idempotentHint': True, 'openWorldHint': True}},
     {'name': 'flop_miner_ranking',
      'description': 'Return FLOP inference miners ranked by reliability. Each entry includes address, '
                     'settle_rate (fraction of on-chain tasks settled, 0–1), local_success (Scout\'s own '
                     'observed success rate), avg_latency_ms, and score. Higher score is better. '
                     'Use to pick a reliable miner, monitor network health, or feed into an alert subscription.',
-     'inputSchema': {'type': 'object', 'properties': {}}},
+     'inputSchema': {'type': 'object', 'properties': {}},
+     'annotations': {'readOnlyHint': True, 'idempotentHint': True, 'openWorldHint': True}},
     {'name': 'flop_miner_history',
      'description': 'Return the settle_rate time series for one miner from Scout\'s 15-minute snapshots. '
                     'Each point has ts (Unix timestamp) and settle_rate (0–1). A short response span means '
@@ -93,7 +99,8 @@ TOOLS = [
      'inputSchema': {'type': 'object', 'required': ['address'], 'properties': {
          'address': {'type': 'string', 'description': 'SS58 miner address'},
          'window': {'type': 'integer', 'description': 'seconds, default 604800 (7 days)'},
-         'points': {'type': 'integer', 'minimum': 2, 'maximum': 500}}}},
+         'points': {'type': 'integer', 'minimum': 2, 'maximum': 500}}},
+     'annotations': {'readOnlyHint': True, 'idempotentHint': True, 'openWorldHint': True}},
     {'name': 'flop_alert_subscribe',
      'description': 'Create an alert that fires when a miner\'s settle_rate drops below threshold. '
                     'Returns alert_id. Use address "*" to watch every miner at once. '
@@ -106,7 +113,8 @@ TOOLS = [
                        'description': 'Fraction 0–1; alert fires when settle_rate drops below this value'},
          'channel': {'type': 'string', 'enum': ['site', 'telegram'],
                      'description': '"site" = poll flop_alert_check to detect firing; "telegram" = push to handle'},
-         'handle': {'type': 'string', 'description': 'Telegram chat id or @username; required for telegram channel'}}}},
+         'handle': {'type': 'string', 'description': 'Telegram chat id or @username; required for telegram channel'}}},
+     'annotations': {'readOnlyHint': False, 'idempotentHint': False, 'destructiveHint': False, 'openWorldHint': False}},
     {'name': 'flop_alert_check',
      'description': 'Return active alerts and their current state. Each item has alert_id, address, '
                     'threshold (the configured trigger level), settle_rate (current observed rate), and '
@@ -114,7 +122,8 @@ TOOLS = [
                     'Poll this after flop_alert_subscribe with channel="site" to detect firings. '
                     'Use alert_id from the response to cancel an alert via the REST API.',
      'inputSchema': {'type': 'object', 'properties': {
-         'address': {'type': 'string', 'description': 'SS58 miner address to filter results; omit to return all alerts'}}}},
+         'address': {'type': 'string', 'description': 'SS58 miner address to filter results; omit to return all alerts'}}},
+     'annotations': {'readOnlyHint': True, 'idempotentHint': True, 'openWorldHint': False}},
 ]
 
 # tool name -> (method, path template, how arguments are sent)
