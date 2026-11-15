@@ -1574,6 +1574,19 @@ async def index():
 # has no use for.
 
 
+@app.get('/mcp/.well-known/glama.json')
+def mcp_glama_claim():
+    """Endpoint verification file for Glama connector ownership.
+
+    Must be served before the MCP handler, without auth or redirects.
+    The claim token is bound to the Glama account and contains no personal info.
+    """
+    return JSONResponse({
+        '$schema': 'https://glama.ai/mcp/schemas/connector.json',
+        'claim': 'glama_claim_-CEF1KteZ5zFJq6dBFxDlo655ia5wUAq',
+    })
+
+
 @app.post('/mcp')
 async def mcp_endpoint(request: Request):
     body = await request.json()
