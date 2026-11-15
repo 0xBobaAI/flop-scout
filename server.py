@@ -425,14 +425,19 @@ async def answer(req: AnswerReq, request: Request, response: Response):
     if merged:
         msgs = llm.build_messages(req.q, merged)
         models = [req.model] + ([req.compare_model] if compare else [])
-        # Price the inference before sending it, from the gateway's zero-spend
-        # estimator. It needs no key, so this works on a dead allowance, and it
-        # puts the miner's number on the receipt next to Scout's instead of
-        # leaving the caller to discover it afterwards.
-        ests = await asyncio.gather(*[
-            flop_estimate.estimate(client, m.split(':', 1)[1], msgs, req.max_tokens)
-            if m.startswith('flop:') else None for m in models])
-        answers = await asyncio.gather(*[llm.complete(client, m, msgs, req.max_tokens, keys) for m in models])
+        # Price the inference from the gateway's zero-spend estimator, and run it
+        # *concurrently* with the completion. It is advisory — it belongs on the
+        # receipt next to Scout's own fee — so making the caller wait for it
+        # twice over bought nothing. Only flop models are estimated; gather()
+        # refuses bare None, so the non-flop slots go through a coroutine.
+        async def _price(m):
+            if not m.startswith('flop:'):
+                return None
+            return await flop_estimate.estimate(client, m.split(':', 1)[1], msgs, req.max_tokens)
+        answers, ests = await asyncio.gather(
+            asyncio.gather(*[llm.complete(client, m, msgs, req.max_tokens, keys) for m in models]),
+            asyncio.gather(*[_price(m) for m in models]),
+        )
         for res, est in zip(answers, ests):
             res['inference_estimate'] = flop_estimate.summarise(est)
             res['paid_by'] = 'user' if (res.get('engine') == 'flop' and keys.get('flop')) or res.get('engine') == 'openrouter' else 'scout'
