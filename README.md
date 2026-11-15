@@ -1,5 +1,9 @@
 # Flop Scout
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Live](https://img.shields.io/badge/live-flopscout.com-brightgreen)](https://flopscout.com)
+[![Network](https://img.shields.io/badge/network-FLOP%20devnet-blue)](https://docs.flop.network)
+
 > **Search and page-reading that agents can pay for — billed in FLOP, per call, quotable before you commit.**
 
 Most agent tools assume a human with a credit card: sign up, attach a Visa, buy credits, hope nobody drains the account. FLOP is built for the opposite case — an agent with its own wallet paying per call for what it consumes.
