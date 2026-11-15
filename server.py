@@ -131,6 +131,19 @@ class AnswerReq(BaseModel):
         return v
 
 
+# Stand-in for "what search usually returns", used only to size a quote.
+# Calibrated against prod on 2026-11-15: three keenable results made a 655-token
+# prompt against 58 for the bare question, so roughly 200 tokens per source.
+# These are not shown to anyone and never reach a model; they only give the
+# gateway's estimator a prompt of realistic length to count.
+_TYPICAL_SNIPPET = ('The FLOP network settles inference between agents and miners on chain. '
+                    'Miners register a GPU, stake FLOP, and are scored by how many sessions '
+                    'they settle versus time out. Agents pay per request from their own wallet. ') * 2
+_TYPICAL_SOURCES = [{'n': i + 1, 'title': 'FLOP network overview and miner reliability',
+                     'url': 'https://docs.flop.network/docs/overview', 'source': 'Keenable',
+                     'snippet': _TYPICAL_SNIPPET} for i in range(3)]
+
+
 class QuoteReq(BaseModel):
     sources: list[str] = ['keenable', 'flop_eco']
     compare_model: str | None = None
@@ -370,12 +383,20 @@ async def quote_preview(req: QuoteReq, request: Request, response: Response):
 
     inference = None
     if req.q and req.q.strip() and req.model.startswith('flop:'):
-        # The same messages the answer path would build, so the token count is
-        # the real one. Sources are empty here: a quote cannot know what search
-        # will return, and pretending otherwise would understate the prompt.
-        msgs = llm.build_messages(req.q, [])
-        est = await flop_estimate.estimate(client, req.model.split(':', 1)[1], msgs, req.max_tokens)
-        inference = flop_estimate.summarise(est)
+        # A quote cannot know what search will return, and the prompt size drives
+        # the cost. Measured on prod: 0 sources = 58 input tokens, 1 = 138,
+        # 3 = 655, 9 = 965 — and it varies ~2.5x per source by provider. One
+        # number would be wrong by a factor of three either way, so report both
+        # ends and say what each assumes.
+        mid = req.model.split(':', 1)[1]
+        floor_est, typ_est = await asyncio.gather(
+            flop_estimate.estimate(client, mid, llm.build_messages(req.q, []), req.max_tokens),
+            flop_estimate.estimate(client, mid, llm.build_messages(req.q, _TYPICAL_SOURCES), req.max_tokens))
+        floor_s, typ_s = flop_estimate.summarise(floor_est), flop_estimate.summarise(typ_est)
+        if floor_s or typ_s:
+            inference = {'floor': floor_s, 'typical': typ_s,
+                         'floor_assumes': 'no sources in the prompt (lower bound)',
+                         'typical_assumes': '3 sources of ordinary snippet length'}
 
     return {**q, 'sources': srcs, 'quota': quota,
             'inference': inference,
