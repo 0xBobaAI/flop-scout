@@ -1374,6 +1374,19 @@ Scout's own fee and the miner's inference cost are always reported as two separa
 - GET {SITE}/api/reliability: settlement-rate deltas for every miner over a window
 - GET {SITE}/api/health: liveness, metering mode, whether the gateway accepts the key
 
+## MCP
+
+A remote MCP server is available at POST {SITE}/mcp (Streamable HTTP, stateless:
+one JSON-RPC message per POST, no SSE stream, no session id).
+
+Tools: scout_quote, scout_answer, scout_catalog, scout_pricing,
+flop_inference_prices, flop_miner_ranking, flop_miner_history,
+flop_alert_subscribe, flop_alert_check
+
+Configure a client with `{{ "type": "http", "url": "{SITE}/mcp" }}`. The tools are
+thin wrappers over the same REST routes, so limits and prices are identical.
+Registry metadata: {SITE}/.well-known/mcp/server.json
+
 ## Limits
 
 - Free tier is rate-limited per caller; limits are returned in X-RateLimit-* headers

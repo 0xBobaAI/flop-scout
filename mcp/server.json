@@ -1,0 +1,26 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "com.flopscout/scout",
+  "title": "Flop Scout",
+  "description": "Web search, page reading and FLOP miner reliability for agents, priced per call in FLOP.",
+  "version": "0.6.0",
+  "websiteUrl": "https://flopscout.com",
+  "repository": {
+    "url": "https://github.com/0xBobaAI/flop-scout",
+    "source": "github"
+  },
+  "license": "MIT",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://flopscout.com/mcp"
+    }
+  ],
+  "icons": [
+    {
+      "src": "https://flopscout.com/static/favicon.svg",
+      "mimeType": "image/svg+xml",
+      "sizes": ["any"]
+    }
+  ]
+}
