@@ -12,3 +12,12 @@ venv
 shots/
 tmp*.js
 .git
+# Local working notes: not in git, but a local `docker build` reads the working
+# tree, not the index, so without this it lands in an image layer forever.
+PROJECT.md
+# Signing material for the MCP registry. Never belongs in an image.
+*.pem
+priv.hex
+mcp-key.*
+.github/
+_whl/

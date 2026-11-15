@@ -3,13 +3,23 @@
   "name": "com.flopscout/scout",
   "title": "Flop Scout",
   "description": "Web search, page reading and FLOP miner reliability for agents, priced per call in FLOP.",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "websiteUrl": "https://flopscout.com",
   "repository": {
     "url": "https://github.com/0xBobaAI/flop-scout",
     "source": "github"
   },
   "license": "MIT",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/0xbobaai/flop-scout:0.6.1",
+      "transport": {
+        "type": "streamable-http",
+        "url": "http://localhost:8080/mcp"
+      }
+    }
+  ],
   "remotes": [
     {
       "type": "streamable-http",

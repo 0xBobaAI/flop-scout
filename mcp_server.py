@@ -20,7 +20,7 @@ import json
 
 import httpx
 
-SERVER_INFO = {'name': 'flop-scout', 'title': 'Flop Scout', 'version': '0.6.0'}
+SERVER_INFO = {'name': 'flop-scout', 'title': 'Flop Scout', 'version': '0.6.1'}
 # Newest first. The client's requested version is echoed when we know it,
 # otherwise we answer with our newest and let the client decide.
 SUPPORTED = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']

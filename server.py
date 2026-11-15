@@ -64,7 +64,7 @@ async def lifespan(_app):
     await client.aclose()
 
 
-app = FastAPI(title='Flop Scout', version='0.6.0', lifespan=lifespan,
+app = FastAPI(title='Flop Scout', version='0.6.1', lifespan=lifespan,
               docs_url='/api/swagger', openapi_url='/api/openapi.json', redoc_url=None)
 # The UI is same-origin, so CORS only matters for agents calling the API from a
 # browser context. Default to our own site rather than '*' — the API is public
