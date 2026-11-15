@@ -57,6 +57,7 @@ async def lifespan(_app):
     # Warm the model picker once so the first page load is not the one that pays
     # for a cold gateway round trip.
     asyncio.create_task(_warm_models())
+    asyncio.create_task(_alert_loop())
     yield
     await client.aclose()
 
@@ -98,6 +99,16 @@ with db_lock:
     # the past week" instead of showing a single point in time.
     db.execute('create table if not exists reliability(ts real, miner text, settled int, timeout int, volume_gn int)')
     db.execute('create index if not exists reliability_miner_ts on reliability(miner, ts)')
+    # Miner reliability alerts. address can be one specific SS58 address or the
+    # special value '*' meaning "every miner in the registry". channel is
+    # 'telegram' (message @handle) or 'twitter' (mention @handle) or 'site'
+    # (shown only via GET /api/alerts/check, no outbound). threshold is the
+    # settle-rate drop (0–1) that triggers. fired_at is the last trigger time.
+    db.execute('''create table if not exists miner_alerts(
+        id integer primary key autoincrement,
+        created_at real, address text, threshold real, channel text, handle text,
+        last_rate real, fired_at real, active int default 1)''')
+    db.execute('create index if not exists miner_alerts_address on miner_alerts(address)')
     db.commit()
 
 _hits = defaultdict(deque)       # ip -> timestamps
@@ -723,6 +734,84 @@ def persist_chain(rows: list) -> None:
 router.on_chain_refresh = persist_chain
 
 
+async def _fire_alerts() -> None:
+    """Check all active alerts against the latest reliability snapshot.
+
+    Called once per hour from the lifespan background task. Reads the last
+    15-minute settlement delta for every miner, compares to each alert's
+    threshold, and fires outbound notifications.
+
+    Telegram delivery uses the Bot API `sendMessage` call. If the token is
+    not set, the trigger is recorded in `fired_at` anyway so site-channel
+    pollers see it via GET /api/alerts/check.
+    """
+    rmap = _reliability_map(window=7200)      # 2 h: snapshots are 15 min apart, need >= 2 points
+    if not rmap:
+        return
+    now = time.time()
+    with db_lock:
+        active = db.execute(
+            'select id, address, threshold, channel, handle, last_rate, fired_at '
+            'from miner_alerts where active = 1').fetchall()
+
+    for alert_id, addr, threshold, channel, handle, last_rate, fired_at in active:
+        # Gather the miners this alert covers
+        targets = {addr: rmap[addr]} if addr != '*' else rmap
+        for miner_addr, stats in targets.items():
+            rate = stats.get('settle_rate')
+            if rate is None:
+                continue
+            crossed = rate < threshold
+            # Hysteresis: if already fired, require recovery above threshold + gap
+            if fired_at and not crossed:
+                recovered = rate >= threshold + _ALERT_HYSTERESIS
+                if not recovered:
+                    continue   # still below recovery line, do not re-arm
+            if not crossed:
+                # Update last_rate but do not fire
+                with db_lock:
+                    db.execute('update miner_alerts set last_rate=? where id=?',
+                               (rate, alert_id))
+                    db.commit()
+                continue
+            # --- FIRE ---
+            msg = (f'⚠️ FLOP miner alert\n'
+                   f'Miner: {miner_addr[:12]}…\n'
+                   f'Settle rate: {rate:.1%} (threshold {threshold:.0%})\n'
+                   f'Via flopscout.com/miners')
+            if channel == 'telegram' and _TG_TOKEN and handle:
+                try:
+                    import httpx as _httpx
+                    async with _httpx.AsyncClient(timeout=15) as _c:
+                        await _c.post(
+                            f'https://api.telegram.org/bot{_TG_TOKEN}/sendMessage',
+                            json={'chat_id': handle, 'text': msg, 'parse_mode': 'Markdown'})
+                except Exception as e:
+                    print('alert telegram failed:', repr(e))
+            with db_lock:
+                db.execute('update miner_alerts set last_rate=?, fired_at=? where id=?',
+                           (rate, now, alert_id))
+                db.commit()
+
+
+_ALERT_LAST_RUN = 0.0
+_ALERT_INTERVAL = 3600   # check once per hour
+
+
+async def _alert_loop() -> None:
+    """Long-running background coroutine that checks alerts once per hour."""
+    global _ALERT_LAST_RUN
+    while True:
+        await asyncio.sleep(60)        # wake up every minute, check if an hour has passed
+        if time.time() - _ALERT_LAST_RUN < _ALERT_INTERVAL:
+            continue
+        _ALERT_LAST_RUN = time.time()
+        try:
+            await _fire_alerts()
+        except Exception as e:
+            print('_fire_alerts error:', repr(e))
+
+
 def _reliability_series(window: int = 86400, max_points: int = 24) -> tuple[dict, list]:
     """Sparkline data from Scout's own settlement snapshots.
 
@@ -1057,6 +1146,108 @@ async def miner_detail(address: str):
         if m['address'] == address:
             return m
     raise HTTPException(404, 'no such miner in the current registry snapshot')
+
+
+# ── Miner reliability alerts ─────────────────────────────────────────────────
+# Callers subscribe to a settle-rate drop below a threshold. The service fires
+# one alert per crossing: once a miner has been marked "fired" it must recover
+# above threshold + 0.05 hysteresis before another alert can go out, so a
+# miner stuck at a low rate does not spam on every check.
+#
+# Channels supported today:
+#   site     — silent; visible only via GET /api/alerts/check. Good for agents
+#              that poll rather than receive pushes.
+#   telegram — posts a message in the Telegram group/channel whose admin handle
+#              is in SCOUT_TG_BOT_TOKEN; the `handle` field is the chat_id or
+#              @username. Requires SCOUT_TG_BOT_TOKEN in the env.
+#   twitter  — posts a mention. Requires SCOUT_TW_* env vars. Not wired yet;
+#              stored and returned, but no outbound call is made.
+#
+# METERING note: alerting is a free-tier service. No FLOP is charged.
+
+_TG_TOKEN = os.getenv('SCOUT_TG_BOT_TOKEN', '')
+_TW_BEARER = os.getenv('SCOUT_TW_BEARER_TOKEN', '')
+_ALERT_HYSTERESIS = 0.05   # must recover this much above threshold before re-firing
+
+
+class AlertReq(BaseModel):
+    address: str = Field('*', description="SS58 miner address, or '*' for every miner")
+    threshold: float = Field(0.5, ge=0.0, le=1.0, description='Fire when settle_rate drops below this')
+    channel: str = Field('site', description="'site', 'telegram', or 'twitter'")
+    handle: str = Field('', description='Chat id / @username for the channel; leave blank for site')
+
+
+@app.post('/api/alerts')
+def create_alert(req: AlertReq, request: Request):
+    """Subscribe to a settle-rate alert for one miner (or all).
+
+    Returns the alert id. Use GET /api/alerts/check to poll, or the service
+    will push to `channel` when the threshold is crossed.
+
+    Channel `site` requires no credentials and suits agents that poll.
+    Channel `telegram` delivers to the given handle when SCOUT_TG_BOT_TOKEN
+    is set server-side; callers supply only the destination handle.
+    """
+    channel = req.channel.strip().lower()
+    if channel not in ('site', 'telegram', 'twitter'):
+        raise HTTPException(422, {'error': 'bad_channel',
+                                   'message': "channel must be 'site', 'telegram', or 'twitter'"})
+    handle = req.handle.strip()
+    if channel in ('telegram', 'twitter') and not handle:
+        raise HTTPException(422, {'error': 'handle_required',
+                                   'message': f"channel '{channel}' requires a handle"})
+    with db_lock:
+        cur = db.execute(
+            'insert into miner_alerts(created_at,address,threshold,channel,handle,last_rate,fired_at,active) '
+            'values (?,?,?,?,?,null,null,1)',
+            (time.time(), req.address, req.threshold, channel, handle))
+        alert_id = cur.lastrowid
+        db.commit()
+    return {'id': alert_id, 'address': req.address, 'threshold': req.threshold,
+            'channel': channel, 'handle': handle,
+            'channel_live': (channel == 'site') or
+                            (channel == 'telegram' and bool(_TG_TOKEN)) or
+                            (channel == 'twitter' and bool(_TW_BEARER)),
+            'note': ('site channel: poll GET /api/alerts/check to read triggers.'
+                     if channel == 'site' else f'fires when settle_rate < {req.threshold:.2f}')}
+
+
+@app.get('/api/alerts/check')
+def check_alerts(address: str = '*', limit: int = 100):
+    """Pending alert triggers. Returns events since they were last seen.
+
+    Each entry has the miner address, the threshold that was crossed and the
+    settle rate at the time. Calling this endpoint marks the returned events as
+    seen (sets `fired_at` to the current time for site-channel alerts).
+    Records older than 7 days are auto-purged.
+    """
+    limit = max(1, min(limit, 1000))
+    cutoff = time.time() - 7 * 86400
+    with db_lock:
+        db.execute('delete from miner_alerts where created_at < ? and active = 0', (cutoff,))
+        if address == '*':
+            rows = db.execute(
+                'select id, address, threshold, channel, handle, last_rate, fired_at, active '
+                'from miner_alerts order by created_at desc limit ?', (limit,)).fetchall()
+        else:
+            rows = db.execute(
+                'select id, address, threshold, channel, handle, last_rate, fired_at, active '
+                'from miner_alerts where address = ? or address = "*" order by created_at desc limit ?',
+                (address, limit)).fetchall()
+        db.commit()
+    keys = ('id', 'address', 'threshold', 'channel', 'handle', 'last_rate', 'fired_at', 'active')
+    return {'alerts': [dict(zip(keys, r)) for r in rows]}
+
+
+@app.delete('/api/alerts/{alert_id}')
+def delete_alert(alert_id: int):
+    """Deactivate an alert by id."""
+    with db_lock:
+        n = db.execute('update miner_alerts set active = 0 where id = ?', (alert_id,)).rowcount
+        db.commit()
+    if not n:
+        raise HTTPException(404, {'error': 'not_found', 'id': alert_id})
+    return {'deleted': alert_id}
 
 
 PAGES = {

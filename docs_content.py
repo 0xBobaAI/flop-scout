@@ -75,6 +75,9 @@ DOCS = {
 <tr><td class="mono">GET /api/miners</td><td>every miner with GPU, stake, router score and 24h settlement delta</td></tr>
 <tr><td class="mono">GET /api/miners/{address}</td><td>one miner, same shape as a row</td></tr>
 <tr><td class="mono">GET /api/miners/{address}/history</td><td>one miner's settlement history from Scout's own snapshots. <code>window</code> in seconds (default 7 days, max 30). Never touches the gateway</td></tr>
+<tr><td class="mono">POST /api/alerts</td><td>subscribe to a settle-rate alert. Fields: <code>address</code> (SS58 or <code>*</code>), <code>threshold</code> (0–1), <code>channel</code> (<code>site</code> | <code>telegram</code> | <code>twitter</code>), <code>handle</code>. Returns an alert id</td></tr>
+<tr><td class="mono">GET /api/alerts/check</td><td>poll pending triggers. Optional <code>address</code> filter. Marks returned events as seen</td></tr>
+<tr><td class="mono">DELETE /api/alerts/{id}</td><td>deactivate an alert</td></tr>
 <tr><td class="mono">GET /api/reliability</td><td>settlement-rate deltas per miner over a window (default 24h)</td></tr>
 <tr><td class="mono">GET /api/inference-prices</td><td>every FLOP model priced as a whole request — FLOP cost, tokens, GFLOPs, latency blocks — by the gateway's own estimator. Needs no key, spends nothing</td></tr>
 </tbody></table></div>
@@ -163,6 +166,13 @@ DOCS = {
   <li><strong>Devnet only.</strong> Activity earns nothing. No allocation is promised.</li>
 </ul>
 <div class="warnbox"><strong>Not affiliated with FLOP Labs.</strong> Independent tool. Answers can be wrong. Every claim links to its source. <a href="https://flop.finance/airdrop/" target="_blank" rel="noopener">FLOP airdrop terms</a>.</div>
+<h2>Contact</h2>
+<p>Questions, feedback, or just want to talk about the project:</p>
+<ul>
+  <li>Twitter  <a href="https://twitter.com/bingobongo_0" target="_blank" rel="noopener">@bingobongo_0</a></li>
+  <li>Telegram  <a href="https://t.me/iLiaBR" target="_blank" rel="noopener">@iLiaBR</a></li>
+  <li>GitHub  <a href="https://github.com/0xBobaAI/flop-scout" target="_blank" rel="noopener">0xBobaAI/flop-scout</a></li>
+</ul>
 '''),
 }
 

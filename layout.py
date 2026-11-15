@@ -123,6 +123,14 @@ def footer() -> str:
       <a href="https://docs.flop.network" target="_blank" rel="noopener">FLOP docs ↗</a>
       <a href="https://explorer.devnet.flop.network" target="_blank" rel="noopener">Explorer ↗</a>
       <a href="https://flop.finance/airdrop/" target="_blank" rel="noopener">Airdrop terms ↗</a>
+      <a href="https://github.com/0xBobaAI/flop-scout" target="_blank" rel="noopener">GitHub ↗</a>
+    </nav>
+  </div>
+  <div>
+    <div class="fnav-title">Contact</div>
+    <nav aria-label="Contact">
+      <a href="https://twitter.com/bingobongo_0" target="_blank" rel="noopener">Twitter  @bingobongo_0 ↗</a>
+      <a href="https://t.me/iLiaBR" target="_blank" rel="noopener">Telegram  @iLiaBR ↗</a>
     </nav>
   </div>
 </footer>'''
