@@ -36,17 +36,22 @@ _SOURCES = {'type': 'array', 'items': {'type': 'string'},
 
 TOOLS = [
     {'name': 'scout_quote',
-     'description': 'Price a request before running it. Spends nothing. With q and model it also returns '
-                    'the FLOP gateway\'s estimate of the miner\'s cost as a floor (no sources) and a typical '
-                    '(three sources) figure. Scout\'s fee and the miner\'s cost are reported separately.',
+     'description': 'Price a request before running it; spends nothing and debits nothing. '
+                    'Returns total_flop (Scout service fee), and when q and model are given, also inference.floor '
+                    'and inference.typical (the FLOP gateway\'s own estimate of the miner cost for a minimal '
+                    'and a three-source call respectively). Scout\'s fee and the miner\'s cost are always '
+                    'two separate line items. Call this before scout_answer to decide whether to proceed.',
      'inputSchema': {'type': 'object', 'properties': {
          'sources': _SOURCES,
          'q': {'type': 'string', 'description': 'The question, to size the inference estimate.'},
          'model': {'type': 'string', 'description': 'e.g. flop:qwen/qwen2.5-0.5b-instruct'},
          'max_tokens': {'type': 'integer', 'minimum': 32, 'maximum': 800}}}},
     {'name': 'scout_answer',
-     'description': 'Search the chosen sources and return a cited answer with an itemised price. '
-                    'FLOP answers need a FLOP gateway key in keys.flop; keys.openrouter works for OpenRouter models.',
+     'description': 'Search the chosen sources, synthesise a cited answer, and return an itemised price. '
+                    'The response contains answer (text), citations (list of {url, title, snippet}), '
+                    'charged_flop (Scout fee charged), and inference_estimate (miner cost). '
+                    'FLOP models require a gateway key in keys.flop; OpenRouter models use keys.openrouter. '
+                    'On devnet keys can be omitted — charges are nominal and nothing is debited.',
      'inputSchema': {'type': 'object', 'required': ['q'], 'properties': {
          'q': {'type': 'string', 'minLength': 2, 'maxLength': 500},
          'sources': _SOURCES,
@@ -54,40 +59,62 @@ TOOLS = [
          'n': {'type': 'integer', 'minimum': 1, 'maximum': 8, 'description': 'results per source'},
          'max_tokens': {'type': 'integer', 'minimum': 32, 'maximum': 800},
          'keys': {'type': 'object', 'additionalProperties': {'type': 'string'},
-                  'description': 'Your own provider keys (flop, openrouter, exa, ...). Never stored or logged.'}}}},
+                  'description': 'Provider keys keyed by name (flop, openrouter, exa …). Never stored or logged.'}}}},
     {'name': 'scout_catalog',
-     'description': 'List the available sources, presets and models.',
+     'description': 'List every source (web, scholar, news …), preset bundle, and inference model available. '
+                    'Returns sources (id, label, free flag), presets (id, included sources), and models '
+                    '(model id, provider, context window). Call once to discover valid values for the '
+                    'sources and model parameters of scout_quote and scout_answer.',
      'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'scout_pricing',
-     'description': 'The full price list in FLOP, the metering mode, and which services are available.',
+     'description': 'Return the full Scout price list: cost per source call, per page read, per token, '
+                    'and the base fee — all in FLOP. Also reports metering_mode ("nominal" on devnet means '
+                    'charges are computed and shown but never debited) and which endpoints are healthy. '
+                    'Call to show the user current rates or to verify the service is operational before a workflow.',
      'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'flop_inference_prices',
-     'description': 'Every live FLOP model priced as a whole request by the gateway\'s own estimator: '
-                    'FLOP cost, token split, GFLOPs, latency blocks. Needs no key and spends nothing.',
+     'description': 'Return every live FLOP inference model with the gateway\'s cost estimate for one request: '
+                    'cost_flop, input_tokens, output_tokens, gflops, latency_blocks. Needs no key and spends nothing. '
+                    'Use to compare miner inference costs before choosing a model for scout_answer, or to '
+                    'show the user what running a FLOP model costs at the network level.',
      'inputSchema': {'type': 'object', 'properties': {
          'max_tokens': {'type': 'integer', 'minimum': 32, 'maximum': 800}}}},
     {'name': 'flop_miner_ranking',
-     'description': 'FLOP inference miners ranked by settlement rate on chain plus local success and latency.',
+     'description': 'Return FLOP inference miners ranked by reliability. Each entry includes address, '
+                    'settle_rate (fraction of on-chain tasks settled, 0–1), local_success (Scout\'s own '
+                    'observed success rate), avg_latency_ms, and score. Higher score is better. '
+                    'Use to pick a reliable miner, monitor network health, or feed into an alert subscription.',
      'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'flop_miner_history',
-     'description': 'One miner\'s settlement history from Scout\'s own 15-minute snapshots, up to 30 days. '
-                    'A short span means a short history, not a stable rate.',
+     'description': 'Return the settle_rate time series for one miner from Scout\'s 15-minute snapshots. '
+                    'Each point has ts (Unix timestamp) and settle_rate (0–1). A short response span means '
+                    'the miner was recently added, not that it is stable. Use window to zoom in on a recent '
+                    'period, or points to control resolution. Useful for trend analysis and alerting context.',
      'inputSchema': {'type': 'object', 'required': ['address'], 'properties': {
          'address': {'type': 'string', 'description': 'SS58 miner address'},
          'window': {'type': 'integer', 'description': 'seconds, default 604800 (7 days)'},
          'points': {'type': 'integer', 'minimum': 2, 'maximum': 500}}}},
     {'name': 'flop_alert_subscribe',
-     'description': 'Subscribe to a settle-rate drop for one miner or all of them ("*"). '
-                    'channel "site" delivers nothing on its own: poll flop_alert_check.',
+     'description': 'Create an alert that fires when a miner\'s settle_rate drops below threshold. '
+                    'Returns alert_id. Use address "*" to watch every miner at once. '
+                    'channel="site" requires polling with flop_alert_check to detect firing; '
+                    'channel="telegram" pushes a message to handle when the threshold is crossed. '
+                    'threshold is a fraction 0–1 (e.g. 0.5 fires when settle_rate drops below 50%).',
      'inputSchema': {'type': 'object', 'required': ['threshold'], 'properties': {
-         'address': {'type': 'string', 'description': 'SS58 address, or "*" for every miner'},
-         'threshold': {'type': 'number', 'minimum': 0, 'maximum': 1},
-         'channel': {'type': 'string', 'enum': ['site', 'telegram']},
-         'handle': {'type': 'string', 'description': 'Telegram chat id or @username; empty for site'}}}},
+         'address': {'type': 'string', 'description': 'SS58 miner address, or "*" for all miners'},
+         'threshold': {'type': 'number', 'minimum': 0, 'maximum': 1,
+                       'description': 'Fraction 0–1; alert fires when settle_rate drops below this value'},
+         'channel': {'type': 'string', 'enum': ['site', 'telegram'],
+                     'description': '"site" = poll flop_alert_check to detect firing; "telegram" = push to handle'},
+         'handle': {'type': 'string', 'description': 'Telegram chat id or @username; required for telegram channel'}}}},
     {'name': 'flop_alert_check',
-     'description': 'Read back alerts and whether they have fired.',
+     'description': 'Return active alerts and their current state. Each item has alert_id, address, '
+                    'threshold (the configured trigger level), settle_rate (current observed rate), and '
+                    'fired (true when settle_rate is below threshold). '
+                    'Poll this after flop_alert_subscribe with channel="site" to detect firings. '
+                    'Use alert_id from the response to cancel an alert via the REST API.',
      'inputSchema': {'type': 'object', 'properties': {
-         'address': {'type': 'string', 'description': 'filter to one miner; default all'}}}},
+         'address': {'type': 'string', 'description': 'SS58 miner address to filter results; omit to return all alerts'}}}},
 ]
 
 # tool name -> (method, path template, how arguments are sent)
