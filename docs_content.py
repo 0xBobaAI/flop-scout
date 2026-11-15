@@ -31,6 +31,19 @@ DOCS = {
 
 → { "total_flop": 0.011, "billed": ["answer", "exa"] }</pre>
 </div>
+<p>Add <code>q</code> and <code>model</code> and it also returns the <em>miner's</em> cost, from the FLOP gateway's own zero-spend estimator. That call needs no key and costs nothing, so you can price a whole job — Scout's fee plus the inference behind it — before committing either.</p>
+<div class="codewrap">
+  <button class="btn small copybtn" type="button" data-copy="POST /api/quote">Copy</button>
+  <pre class="code" data-lang="request">POST /api/quote
+{ "sources": ["keenable"], "q": "How many miners are on FLOP?",
+  "model": "flop:qwen/qwen2.5-0.5b-instruct", "max_tokens": 250 }
+
+→ { "total_flop": 0.001,                       // Scout's fee
+    "inference": { "cost_flop": 1.848,         // the miner's, gateway-estimated
+                   "input_tokens": 58, "output_tokens": 250,
+                   "gflops": 616, "latency_blocks": 4,
+                   "available_miners": 28 } }</pre>
+</div>
 <h2>2. Ask</h2>
 <p><code>sources: ["auto"]</code> lets Scout pick free sources from the question. A paid source is only ever used if you name it.</p>
 <div class="codewrap">
@@ -62,6 +75,7 @@ DOCS = {
 <tr><td class="mono">GET /api/miners</td><td>every miner with GPU, stake, router score and 24h settlement delta</td></tr>
 <tr><td class="mono">GET /api/miners/{address}</td><td>one miner, same shape as a row</td></tr>
 <tr><td class="mono">GET /api/reliability</td><td>settlement-rate deltas per miner over a window (default 24h)</td></tr>
+<tr><td class="mono">GET /api/inference-prices</td><td>every FLOP model priced as a whole request by the gateway's estimator, with its own <code>available_miners</code> count. Needs no key, spends nothing</td></tr>
 </tbody></table></div>
 <h2>Operations</h2>
 <div class="table-wrap"><table class="ltable">
