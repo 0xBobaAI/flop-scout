@@ -64,7 +64,7 @@ async def lifespan(_app):
     await client.aclose()
 
 
-app = FastAPI(title='Flop Scout', version='0.5.0', lifespan=lifespan,
+app = FastAPI(title='Flop Scout', version='0.6.0', lifespan=lifespan,
               docs_url='/api/swagger', openapi_url='/api/openapi.json', redoc_url=None)
 # The UI is same-origin, so CORS only matters for agents calling the API from a
 # browser context. Default to our own site rather than '*' — the API is public
@@ -100,7 +100,7 @@ app.mount('/static', StaticFiles(directory=BASE / 'static'), name='static')
 # An honest, identifiable User-Agent. Some upstreams answer 403 to Python's
 # default agent (observed on api.flop.network for urllib); being explicit also
 # means a rate-limited operator can see who is calling.
-UA = {'User-Agent': f'flop-scout/{os.getenv("SCOUT_UA_VERSION", "0.5")} (+https://flopscout.com)'}
+UA = {'User-Agent': f'flop-scout/{os.getenv("SCOUT_UA_VERSION", app.version)} (+https://flopscout.com)'}
 client = httpx.AsyncClient(timeout=30, follow_redirects=True, headers=UA)
 
 DATA.mkdir(parents=True, exist_ok=True)
