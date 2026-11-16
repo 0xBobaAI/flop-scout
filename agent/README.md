@@ -1,77 +1,80 @@
-# Flop Scout — scrape agent
+# Flop Scout test agent
 
-A standalone Python script that drives the Scout API to parse product pages and
-answer research questions.  No LLM orchestrator, no extra dependencies — only
-the standard library.
+A small agent that reads product and pricing pages through Scout's MCP server and
+checks what it gets back. It is a client of Scout, not part of it: it connects to
+`POST /mcp` exactly as an external agent would, so a run tests the whole public
+path, from the MCP handshake to the page reader to Scout's error codes.
 
-## What it does
+Standard library only. Python 3.10+.
 
-1. Reads a list of jobs from a JSON file (questions, URLs, or both)
-2. Calls `GET /api/pricing` and `GET /api/catalog` to verify the Scout instance
-3. Runs each job through `POST /api/answer`
-4. Writes one JSON object per line to a results file
-5. Prints a cost/latency summary
-
-## Quickstart
+## Run
 
 ```bash
-# run the example job list against flopscout.com
-python scrape_agent.py jobs.example.json --verbose
+# against production
+python agent/scrape_agent.py agent/jobs.example.json
 
-# dry-run: quote every job without running it
-python scrape_agent.py jobs.example.json --dry-run
+# against a local server
+python agent/scrape_agent.py agent/jobs.example.json --base http://127.0.0.1:8787
 
-# local dev instance
-python scrape_agent.py jobs.example.json --base http://127.0.0.1:8787
-
-# custom output file
-python scrape_agent.py jobs.example.json --out /tmp/my-run.jsonl
+# also ask each job's question through scout_answer (needs a working FLOP key)
+python agent/scrape_agent.py agent/jobs.example.json --answer --flop-key "$FLOP_KEY"
 ```
 
-## Job file format
+Exit status is `0` only when every job passes, so a run can gate a deploy.
 
-A JSON array.  Each job needs at least `q` or `url` (or both):
+## What one job does
 
-```json
-[
-  {
-    "q":      "What is the current price of GPT-4o?",
-    "url":    "https://openai.com/api/pricing",
-    "sources": ["web", "read"],
-    "model":  "flop:qwen/qwen3-14b",
-    "label":  "openai-pricing"
-  }
-]
-```
+1. `tools/call scout_read` with the job's URL. No search, no model, no FLOP key.
+2. Extracts the requested fields from the page text with regular expressions:
+   `price`, `token_price`, `availability`, `rating`.
+3. Compares the result with the job's `expect` block.
+4. With `--answer`, sends the job's `question` through `scout_answer`, restricted
+   to the `page` source. That result is reported on its own line, with its own fee:
+   a read and an answer are two services and two charges.
 
-| Field | Required | Description |
-|---|---|---|
-| `q` | one of `q`/`url` | Natural language question |
-| `url` | one of `q`/`url` | Page to read and summarise |
-| `sources` | no | Source ids from `/api/catalog`; default `["auto"]` |
-| `model` | no | Model id; default is Scout's server default |
-| `label` | no | Tag in the output; auto-derived from `q` if omitted |
+Extraction is deterministic on purpose. Reading works without inference, so the
+agent runs while the devnet FLOP allowance is unavailable, and a pass or fail
+means the same thing on every run.
 
-## Output format
-
-One JSON object per line (`results.jsonl`):
+## Job format
 
 ```json
 {
-  "label":          "openai-pricing",
-  "q":              "...",
-  "answer":         "GPT-4o costs $2.50/M input tokens...",
-  "citations":      [{"url": "...", "title": "...", "snippet": "..."}],
-  "charged_flop":   0.003,
-  "inference_flop": 1.824,
-  "latency_s":      3.1,
-  "error":          null
+  "label": "books-product",
+  "url": "https://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html",
+  "extract": ["price", "availability"],
+  "expect": {"title_contains": "A Light in the Attic", "price": "£51.77"},
+  "question": "What does this book cost and is it in stock?"
 }
 ```
 
-## Notes
+| Field | Meaning |
+|---|---|
+| `url` | Required. The page to read |
+| `extract` | Fields to pull from the page text |
+| `expect.title_contains` | Text the page title must contain |
+| `expect.content_contains` | Text the page body must contain |
+| `expect.<field>` | A value that must be among the extracted ones |
+| `expect.error` | The read must fail with this Scout error code (tests the guards) |
+| `question` | Used only with `--answer` |
 
-- On devnet `charged_flop` is computed but nothing is debited (`metering=nominal`)
-- `inference_flop` is the FLOP gateway's estimate of the miner cost — separate from the Scout fee
-- Results are appended immediately: a crash does not lose earlier output
-- The agent respects the Scout rate limit; slow down with `--dry-run` first to estimate cost
+A job with no `expect` passes when the page reads and every requested field is found.
+
+## Output
+
+One JSON line per job, appended to `agent-run.jsonl` (change with `--out`):
+status, title, final URL, characters read, whether it came from cache, the
+extracted fields, Scout's read fee, and the reasons for any failure. Page text is
+not stored unless `--verbose` is set, and then only its first 400 characters.
+
+## Being a good client
+
+Keyless reads go through Jina's public reader, which allows about 20 requests a
+minute per IP, and every Scout caller shares that budget. The agent waits 4 s
+between jobs (`--pause`). Scout answers `503 reader_busy` with `Retry-After` when
+the shared budget is spent. A URL read in the last 10 minutes is served from
+cache and costs nothing.
+
+Some sites serve a bot check instead of the page; Scout reports that as
+`blocked_by_target` rather than returning the check page as content. Whether a
+site may be read at all is between you and that site: check its terms first.

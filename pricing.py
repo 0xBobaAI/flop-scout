@@ -50,6 +50,7 @@ SERVICES: dict[str, Price] = {
     # Free routes — no external API cost, so no reason to charge.
     'keenable':     Price(0.0,    'search', free=True),
     'jina':         Price(0.0,    'page read', free=True),
+    'page':         Price(0.0,    'URL read', free=True),
     'github':       Price(0.0,    'repo search', free=True),
     'hn':           Price(0.0,    'discussion search', free=True),
     'arxiv':        Price(0.0,    'paper search', free=True),
@@ -89,6 +90,11 @@ ANSWER_FEE = Price(0.001, 'answer')
 
 # Compare mode runs a second model over the same sources.
 COMPARE_FEE = Price(0.002, 'second model')
+
+# A standalone page read (POST /api/read): no search, no model. The service fee
+# for reading, like ANSWER_FEE is for answering. Inside an answer the `page`
+# source is free and the answer fee covers it.
+READ_FEE = Price(0.001, 'page read')
 
 
 def price_for(source_id: str) -> Price:
@@ -133,6 +139,16 @@ def quote(sources: list[str], compare: bool = False, cache_hit: bool = False) ->
     }
 
 
+def read_quote(cache_hit: bool = False) -> dict:
+    """Quote for one standalone page read. A cache hit is free, as with answers."""
+    items = [] if cache_hit else [{'id': 'read', 'label': 'Page read', 'unit': READ_FEE.unit,
+                                   'price_flop': READ_FEE.price_flop, 'free': False}]
+    total = round(sum(i['price_flop'] for i in items), 6)
+    return {'items': items, 'total_flop': total,
+            'charged_flop': None if METERING == 'nominal' else total,
+            'metering': METERING, 'cache_hit': cache_hit}
+
+
 def preset_quote(presets: dict, key: str, compare: bool = False) -> dict | None:
     """One number for a whole preset, so an agent can budget a task, not a call."""
     p = presets.get(key)
@@ -148,6 +164,7 @@ def catalogue() -> dict:
         'metering': METERING,
         'answer_fee': asdict(ANSWER_FEE) | {'id': 'answer'},
         'compare_fee': asdict(COMPARE_FEE) | {'id': 'compare'},
+        'read_fee': asdict(READ_FEE) | {'id': 'read'},
         'services': [
             {'id': k, **asdict(v)} for k, v in sorted(
                 SERVICES.items(), key=lambda kv: (-kv[1].price_flop, kv[0]))

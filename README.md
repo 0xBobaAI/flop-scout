@@ -14,7 +14,7 @@ Five pages, one backend:
 
 | Surface | What it is |
 |---|---|
-| **`/`** | Answer — 29 sources, cited answers, itemised FLOP price, on-chain receipt |
+| **`/`** | Answer — 30 sources, cited answers, itemised FLOP price, on-chain receipt |
 | **`/miners`** | Every registered miner ranked by settlement performance, with a 24h trend |
 | **`/analytics`** | Network usage: per-model success, payer split, quoted vs charged |
 | **`/docs`** | Endpoints, pricing table, error codes, integration guide |
@@ -105,8 +105,9 @@ This is the piece with no equivalent elsewhere: a continuously updated, public r
 ## What it does
 
 **Answer**
-- 29 sources in 7 groups, run in parallel, merged and deduped by URL
-- 8 keyless free sources (Keenable, Jina*, GitHub, HN, arXiv, Wikipedia, DefiLlama, CoinGecko)
+- 30 sources in 7 groups, run in parallel, merged and deduped by URL
+- Keyless free sources: Keenable, the page reader, GitHub, HN, arXiv, Wikipedia, DefiLlama, CoinGecko
+- A URL written in the question is read directly; `POST /api/read` returns one page as Markdown with no search and no model
 - Every claim links to a numbered source; the model is instructed to cite or admit it cannot answer
 - Price preview before you send: `POST /api/quote` returns the itemised total for the exact source set
 - Itemised FLOP price per answer, and the miner's own cost shown separately
@@ -166,6 +167,7 @@ POST /api/answer
 |---|---|
 | `POST /api/answer` | search → cited answer → receipt, with an itemised price |
 | `POST /api/quote` | the price of a request before you send it — no search, no inference |
+| `POST /api/read` | one public page as readable Markdown — no search, no model |
 | `GET /api/pricing` | the service catalogue, metering mode, availability |
 | `GET /api/catalog` | sources, presets, models |
 | `GET /api/router` | live miner ranking with scores |
@@ -189,7 +191,7 @@ agent / browser
       ▼
   FastAPI ──► quote()                 price this call before doing it
       │
-      ├────► 29 sources in parallel ──► web · FLOP gateway · explorer · arXiv · CoinGecko
+      ├────► 30 sources in parallel ──► web · FLOP gateway · explorer · arXiv · CoinGecko
       │
       ├────► Smart Router             which miner is healthy right now
       │

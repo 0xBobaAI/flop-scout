@@ -38,3 +38,6 @@ PROJECT.md
 # Agent DID seed material — never commit
 *.seed
 .did-seed
+
+# Test agent output
+*.jsonl

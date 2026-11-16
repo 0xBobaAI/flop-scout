@@ -56,7 +56,8 @@ curl -fsS "${MCP_HDR[@]}" -X POST "$BASE/mcp" \
 import json, sys
 t = json.load(sys.stdin)["result"]["tools"]
 # A floor, not an equality: adding a tool must not fail CI, dropping one must.
-assert len(t) >= 9, f"expected at least 9 tools, got {len(t)}"
+assert len(t) >= 10, f"expected at least 10 tools, got {len(t)}"
+assert "scout_read" in {x["name"] for x in t}, "scout_read is missing"
 bad = [x["name"] for x in t if not x.get("description") or not x.get("inputSchema")]
 assert not bad, f"tools missing description or schema: {bad}"
 print(f"  tools: {len(t)}, all described and schematised")
@@ -78,6 +79,13 @@ inf = d.get("inference") or {}
 assert inf.get("floor"), f"no inference estimate: {inf}"
 print("  quote: %s FLOP fee, miner floor %s FLOP" % (d["total_flop"], inf["floor"]["cost_flop"]))
 ' || fail "/api/quote did not price the request"
+
+# A URL that is never fetched: the validator must refuse it before any network
+# call, so this checks the guard without depending on the reader being up.
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/read" \
+  -H 'content-type: application/json' -d '{"url":"http://169.254.169.254/latest/meta-data/"}')
+[ "$CODE" = 422 ] || fail "/api/read accepted a link-local address (HTTP $CODE)"
+echo "  /api/read refuses link-local addresses"
 
 # --proxy-headers is what makes client_id() see the caller behind a same-host
 # proxy; without it every caller shares one rate-limit bucket.

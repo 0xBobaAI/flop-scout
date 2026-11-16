@@ -32,6 +32,12 @@ SOURCES = {
         'fn': w.web_read,
         'hint': 'Reads full page content via Scout reader · passage extraction',
     },
+    'page': {
+        'label': 'Page reader',
+        'group': 'Web',
+        'fn': w.page_source,
+        'hint': 'Reads the URLs written in your question · no key required',
+    },
 
     # ── Web: key-gated routes (Builder tier) ─────────────────────────────────
     'exa': {

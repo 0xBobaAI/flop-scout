@@ -53,6 +53,18 @@ DOCS = {
 
 → { "answers": [ … ], "pricing": { … } }</pre>
 </div>
+<h2>Read one page</h2>
+<p>Already have the URL? <code>POST /api/read</code> returns the page as readable Markdown: no search, no model, no inference key. The same URL within 10 minutes is free.</p>
+<div class="codewrap">
+  <button class="btn small copybtn" type="button" data-copy="POST /api/read">Copy</button>
+  <pre class="code" data-lang="request">POST /api/read
+{ "url": "https://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html",
+  "max_chars": 2000 }
+
+→ { "title": "A Light in the Attic | Books to Scrape",
+    "content": "… £51.77  In stock (22 available) …", "truncated": false,
+    "final_url": "…", "http_status": 200, "pricing": { "total_flop": 0.001 } }</pre>
+</div>
 <h2>Next</h2>
 <p>See the full <a href="/docs/endpoints">endpoint list</a> and <a href="/docs/pricing">pricing</a>.</p>
 '''),
@@ -64,6 +76,7 @@ DOCS = {
 <tbody>
 <tr><td class="mono">POST /api/answer</td><td>search → cited answer → receipt, with an itemised FLOP price</td></tr>
 <tr><td class="mono">POST /api/quote</td><td>the price before you send it. No search, no inference, no ledger row</td></tr>
+<tr><td class="mono">POST /api/read</td><td>one public page as readable Markdown: <code>url</code>, <code>max_chars</code> (500–20000, default 8000). No search, no model. Errors carry a stable <code>error</code> code; a failed read costs nothing</td></tr>
 <tr><td class="mono">GET /api/pricing</td><td>the full catalogue, metering mode, and which services are available</td></tr>
 <tr><td class="mono">GET /api/catalog</td><td>sources, presets and models</td></tr>
 </tbody></table></div>
@@ -76,7 +89,7 @@ DOCS = {
 <tr><td class="mono">GET /api/miners/{address}</td><td>one miner, same shape as a row</td></tr>
 <tr><td class="mono">GET /api/miners/{address}/history</td><td>one miner's settlement history from Scout's own snapshots. <code>window</code> in seconds (default 7 days, max 30). Never touches the gateway</td></tr>
 <tr><td class="mono">POST /api/alerts</td><td>subscribe to a settle-rate alert. Fields: <code>address</code> (SS58 or <code>*</code>), <code>threshold</code> (0–1), <code>channel</code> (<code>site</code> | <code>telegram</code> | <code>twitter</code>), <code>handle</code>. Returns an alert id</td></tr>
-<tr><td class="mono">GET /api/alerts/check</td><td>poll pending triggers. Optional <code>address</code> filter. Marks returned events as seen</td></tr>
+<tr><td class="mono">GET /api/alerts/check</td><td>active alerts with <code>last_rate</code> and <code>fired_at</code> (last trigger, null if never). Optional <code>address</code> filter. Reading clears nothing</td></tr>
 <tr><td class="mono">DELETE /api/alerts/{id}</td><td>deactivate an alert</td></tr>
 <tr><td class="mono">GET /api/reliability</td><td>settlement-rate deltas per miner over a window (default 24h)</td></tr>
 <tr><td class="mono">GET /api/inference-prices</td><td>every FLOP model priced as a whole request — FLOP cost, tokens, GFLOPs, latency blocks — by the gateway's own estimator. Needs no key, spends nothing</td></tr>
@@ -104,6 +117,10 @@ DOCS = {
 <tr><td class="mono">503 / 524</td><td>Origin timeout at the gateway</td><td>Congestion, not your request. Sources still return</td></tr>
 <tr><td class="mono">401 model_not_allowed</td><td>Your key is not scoped for that model</td><td>New devnet keys get qwen2.5-0.5b only</td></tr>
 <tr><td class="mono">404 not_found</td><td>Unknown API path or miner address</td><td>GET /api/catalog lists what exists</td></tr>
+<tr><td class="mono">422 bad_url / unresolvable</td><td><code>/api/read</code>: not a public http(s) URL, or the host does not resolve</td><td>Check the URL</td></tr>
+<tr><td class="mono">502 blocked_by_target / target_error</td><td><code>/api/read</code>: the site served a bot check or an error page instead of the content</td><td>Nothing Scout can fix; try another page</td></tr>
+<tr><td class="mono">502 reader_refused</td><td><code>/api/read</code>: the reader refuses this domain to anonymous callers</td><td>Pass your own Jina key in <code>keys.jina</code></td></tr>
+<tr><td class="mono">503 reader_busy</td><td><code>/api/read</code>: the shared reader is at its per-minute limit</td><td>Retry after the <code>Retry-After</code> header, or use <code>keys.jina</code></td></tr>
 </tbody></table></div>
 '''),
 

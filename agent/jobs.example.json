@@ -1,30 +1,46 @@
 [
   {
-    "label": "openai-pricing",
-    "q": "What are the current input and output token prices for GPT-4o and GPT-4o mini?",
-    "url": "https://openai.com/api/pricing",
-    "sources": ["web", "read"]
+    "label": "books-product",
+    "url": "https://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html",
+    "extract": ["price", "availability"],
+    "expect": {"title_contains": "A Light in the Attic", "price": "£51.77"},
+    "question": "What does this book cost and is it in stock?"
   },
   {
-    "label": "anthropic-pricing",
-    "q": "What are the current prices for Claude Sonnet and Claude Haiku?",
-    "url": "https://www.anthropic.com/pricing",
-    "sources": ["web", "read"]
+    "label": "demo-shop-product",
+    "url": "https://web-scraping.dev/product/1",
+    "extract": ["price"],
+    "expect": {"title_contains": "Chocolate", "price": "$9.99"},
+    "question": "What is the price of this product?"
   },
   {
-    "label": "flop-network-status",
-    "q": "How many miners are currently active on the FLOP network and what is the average settlement rate?",
-    "sources": ["web"]
+    "label": "fireworks-pricing",
+    "url": "https://fireworks.ai/pricing",
+    "extract": ["token_price"],
+    "expect": {"title_contains": "Pricing"},
+    "question": "What do the cheapest models cost per million tokens?"
   },
   {
-    "label": "groq-models",
-    "q": "What LLM models does Groq offer and what are their token prices?",
-    "url": "https://groq.com/pricing",
-    "sources": ["web", "read"]
+    "label": "together-pricing",
+    "url": "https://www.together.ai/pricing",
+    "extract": ["price"],
+    "expect": {"title_contains": "Pricing"},
+    "question": "What are the per-token prices for open models?"
   },
   {
-    "label": "together-ai-models",
-    "q": "List the available open-source models on Together AI with their prices per million tokens.",
-    "sources": ["web"]
+    "label": "steam-game",
+    "url": "https://store.steampowered.com/app/620/Portal_2/",
+    "extract": ["price"],
+    "expect": {"title_contains": "Portal 2"}
+  },
+  {
+    "label": "guard-missing-page",
+    "url": "https://books.toscrape.com/this-page-does-not-exist.html",
+    "expect": {"error": "target_error"}
+  },
+  {
+    "label": "guard-cloud-metadata",
+    "url": "http://169.254.169.254/latest/meta-data/",
+    "expect": {"error": "bad_url"}
   }
 ]

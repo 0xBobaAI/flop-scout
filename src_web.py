@@ -2,10 +2,14 @@
 Each source: async fn(client, query, n, keys) -> list[{title, url, snippet}]
 """
 import asyncio
+import ipaddress
 import os
 import re
 import time
-from urllib.parse import quote
+from collections import deque
+from urllib.parse import quote, urlsplit
+
+import httpx
 
 # Optional deep-read backend. Point SCOUT_URL at your own Scout reader deployment
 # to enable the `web_read` source; leave unset and it degrades to search snippets.
@@ -133,6 +137,190 @@ async def web_read(c, q, n, keys):
 
     results = await asyncio.gather(*[extract(h) for h in search_hits])
     return [r for r in results if r and r.get('snippet')]
+
+
+# ── Page reading ───────────────────────────────────────────────────────────────
+# One URL in, the page's readable text out, through r.jina.ai. Measured from
+# the VPS (2026-11): a keyless POST reads ordinary product, pricing and docs
+# pages in 0.4-6.6 s and reports the target's own HTTP status and final URL.
+# It refuses some domains to anonymous callers (403 AbuseAlleviationError) and
+# unresolvable hosts (422). Jina publishes a keyless limit of 20 requests/min
+# per IP, and every Scout caller shares this server's IP, so keyless reads go
+# through one global budget. A caller's own key bypasses it.
+
+READER_URL = 'https://r.jina.ai/'
+READER_RPM = int(os.getenv('READER_RPM', '18'))   # under Jina's keyless 20/min
+READ_STORE_CHARS = 20000          # what the cache keeps; callers ask for less
+_READ_TTL = 600
+_read_cache: dict = {}            # url -> (ts, page)
+_reader_calls: deque = deque()    # timestamps of keyless upstream reads
+_URL_RE = re.compile(r'https?://[^\s<>"\'\]]+', re.I)
+_LOCAL_SUFFIXES = ('.localhost', '.local', '.internal', '.lan', '.home.arpa')
+# Titles a site serves instead of the page when it decides the reader is a bot.
+# Measured: raspberrypi.com answered 'Just a moment...' to one read in three.
+_CHALLENGE_TITLES = ('just a moment', 'attention required', 'access denied', 'verify you are human')
+
+
+class ReadError(Exception):
+    """A read that produced no usable page. `status` is what Scout answers
+    with; `code` is the stable, machine-readable reason."""
+
+    def __init__(self, status: int, code: str, message: str, **extra):
+        super().__init__(message)
+        self.status, self.code, self.message, self.extra = status, code, message, extra
+
+
+def urls_in(text: str, limit: int = 3) -> list[str]:
+    """http(s) URLs written in free text, in order, deduplicated."""
+    out = []
+    for m in _URL_RE.findall(text or ''):
+        u = m.rstrip('.,;:!?\'"')
+        # Keep the ')' of a Wikipedia-style path, drop the one closing a sentence.
+        while u.endswith(')') and u.count(')') > u.count('('):
+            u = u[:-1]
+        if u not in out:
+            out.append(u)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def check_url(url: str) -> str:
+    """Return the URL if Scout will read it, else raise ReadError(422).
+
+    The fetch happens on Jina's side, so this is not what keeps a request off
+    Scout's own network. It keeps the reader to public pages: no loopback,
+    private or reserved addresses, no intranet names, no credentials.
+    """
+    u = (url or '').strip()
+    if len(u) > 2000:
+        raise ReadError(422, 'bad_url', 'URL is longer than 2000 characters')
+    try:
+        p = urlsplit(u)
+        host = (p.hostname or '').rstrip('.')
+        p.port                       # raises ValueError on a malformed port
+    except ValueError:
+        raise ReadError(422, 'bad_url', 'Not a valid URL') from None
+    if p.scheme not in ('http', 'https'):
+        raise ReadError(422, 'bad_url', 'Only http and https URLs can be read')
+    if p.username or p.password:
+        raise ReadError(422, 'bad_url', 'URLs carrying credentials are refused')
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        ip = None
+    if ip is not None:
+        if not ip.is_global:
+            raise ReadError(422, 'bad_url', 'Private, loopback and reserved addresses are refused')
+    elif (not host or '.' not in host or host == 'localhost' or host.endswith(_LOCAL_SUFFIXES)
+          or re.fullmatch(r'[0-9.]+', host)):   # 127.1 is loopback but not a valid ip_address()
+        raise ReadError(422, 'bad_url', 'Only public hostnames can be read')
+    return u
+
+
+def cached_read(url: str):
+    hit = _read_cache.get(url)
+    if hit and time.time() - hit[0] < _READ_TTL:
+        return hit[1]
+    return None
+
+
+async def read_page(c, url: str, keys: dict) -> dict:
+    """Read one page through r.jina.ai; the result says whether it came from cache.
+
+    Raises ReadError when no usable page came back: a bot check, a 4xx/5xx from
+    the target, an empty page, or a reader that refused, failed or timed out.
+    """
+    url = check_url(url)
+    hit = cached_read(url)
+    if hit:
+        return {**hit, 'cached': True}
+    key = ((keys or {}).get('jina') or '').strip()
+    if not key:
+        now = time.time()
+        while _reader_calls and now - _reader_calls[0] > 60:
+            _reader_calls.popleft()
+        if len(_reader_calls) >= READER_RPM:
+            raise ReadError(503, 'reader_busy', 'The shared page reader is at its per-minute limit. '
+                            'Retry in a minute, or pass your own Jina key in keys.jina.', retry_after=60)
+        _reader_calls.append(now)
+    h = {'Accept': 'application/json', 'X-Retain-Images': 'none'}
+    if key:
+        h['Authorization'] = f'Bearer {key}'
+    try:
+        r = await c.post(READER_URL, json={'url': url}, headers=h, timeout=40)
+    except httpx.TimeoutException:
+        raise ReadError(504, 'reader_timeout', 'The page reader did not answer within 40 s') from None
+    except httpx.HTTPError as e:
+        raise ReadError(502, 'reader_unreachable', f'Page reader unreachable: {type(e).__name__}') from None
+    try:
+        j = r.json()
+    except ValueError:
+        j = {}
+    if not isinstance(j, dict):
+        j = {}
+    if r.status_code == 429:
+        raise ReadError(503, 'reader_busy', 'The page reader is rate-limiting Scout. Retry in a minute, '
+                        'or pass your own Jina key in keys.jina.', retry_after=60)
+    d = j.get('data')
+    if r.status_code >= 400 or not isinstance(d, dict):
+        msg = str(j.get('readableMessage') or j.get('message') or f'HTTP {r.status_code}')[:240]
+        if 'could not be resolved' in msg:
+            raise ReadError(422, 'unresolvable', msg)
+        if r.status_code in (401, 403) or j.get('name') == 'AbuseAlleviationError':
+            raise ReadError(502, 'reader_refused', msg if key else
+                            'The reader refuses this domain to anonymous callers. '
+                            'Pass your own Jina key in keys.jina.')
+        raise ReadError(502, 'reader_error', msg)
+    title = (d.get('title') or '').strip()
+    status = d.get('httpStatus')
+    final = d.get('finalUrl') or d.get('url') or url
+    if title.lower().startswith(_CHALLENGE_TITLES):
+        raise ReadError(502, 'blocked_by_target',
+                        f'The site answered with a bot check ("{title[:60]}") instead of the page',
+                        final_url=final)
+    if isinstance(status, int) and status >= 400:
+        raise ReadError(502, 'target_error', f'The page answered HTTP {status}',
+                        http_status=status, final_url=final)
+    content = (d.get('content') or '').strip()
+    if not content:
+        raise ReadError(502, 'empty_page', 'The page has no readable text', final_url=final)
+    page = {
+        'url': url,
+        'final_url': final,
+        'redirected': final.rstrip('/') != url.rstrip('/'),
+        'title': title,
+        'description': (d.get('description') or '').strip()[:500],
+        'published_time': d.get('publishedTime'),
+        'http_status': status,
+        'content': content[:READ_STORE_CHARS],
+        'chars_total': len(content),
+        'reader': 'r.jina.ai',
+    }
+    _read_cache[url] = (time.time(), page)
+    if len(_read_cache) > 500:
+        for k in sorted(_read_cache, key=lambda k: _read_cache[k][0])[:100]:
+            _read_cache.pop(k, None)
+    return {**page, 'cached': False}
+
+
+async def page_source(c, q, n, keys):
+    """Read the http(s) URLs written in the question, up to 3.
+
+    Free inside an answer like every keyless source: the answer fee covers the
+    service. Pages that fail are skipped; if none can be read the source fails
+    with the first reason, which lands in source_report.
+    """
+    urls = urls_in(q, limit=min(max(n, 1), 3))
+    if not urls:
+        raise RuntimeError('No http(s) URL in the question to read')
+    results = await asyncio.gather(*[read_page(c, u, keys) for u in urls], return_exceptions=True)
+    out = [{'title': p['title'] or p['final_url'], 'url': p['final_url'], 'snippet': p['content'][:1500]}
+           for p in results if isinstance(p, dict)]
+    if not out:
+        e = results[0]
+        raise RuntimeError(e.message if isinstance(e, ReadError) else type(e).__name__)
+    return out
 
 
 # ── FLOP network — the core value prop ───────────────────────────────────────

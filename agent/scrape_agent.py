@@ -1,297 +1,274 @@
 #!/usr/bin/env python3
-"""
-Flop Scout -- scrape agent
-~~~~~~~~~~~~~~~~~~~~~~~~~
-Autonomous agent that sends jobs to the Scout API, records results, and reports
-a simple cost/quality summary.  Requires no LLM orchestrator: it drives the
-Scout MCP endpoints directly over HTTP.
+"""Flop Scout test agent: reads product and pricing pages through Scout's MCP server.
+
+It is a client of Scout, not part of it. It connects to POST /mcp exactly as an
+external agent would (initialize, tools/list, tools/call), reads each job's page
+with the scout_read tool, extracts what it was asked to look for, and checks the
+result against what the job says it should find. That turns one run into a
+regression test of the whole public path: MCP transport, the page reader, and
+Scout's error codes.
+
+Extraction is deterministic (regular expressions) on purpose. Page reading works
+with no FLOP key, so the agent runs while the devnet allowance is unavailable,
+and a pass or fail means the same thing on every run. When a working inference
+key exists, --answer also sends each page's question through scout_answer, and
+that call is reported as its own line, never mixed into the read result.
+
+Standard library only.
 
 Usage
 -----
-  # basic -- read jobs from a JSON file, write results to results.jsonl
   python scrape_agent.py jobs.example.json
-
-  # custom output file
-  python scrape_agent.py jobs.example.json --out /tmp/run1.jsonl
-
-  # live Scout instance (default: flopscout.com)
-  python scrape_agent.py jobs.example.json --base https://flopscout.com
-
-  # local dev instance
   python scrape_agent.py jobs.example.json --base http://127.0.0.1:8787
+  python scrape_agent.py jobs.example.json --answer --flop-key "$KEY"
+  python scrape_agent.py jobs.example.json --out run.jsonl --verbose
 
-  # verbose: print each answer to stdout as it arrives
-  python scrape_agent.py jobs.example.json --verbose
+Each job may set `expect` to state what a correct read contains:
 
-Job file format
----------------
-A JSON array of job objects.  Each job must have either `q` (a question for
-scout_answer) or `url` (a page to read and summarise).  Optional fields:
+  {"label": "books", "url": "https://...", "extract": ["price", "availability"],
+   "expect": {"title_contains": "Attic", "price": "£51.77"}}
 
-  {
-    "q":        "What is the price of GPT-4o on OpenAI?",   // natural language query
-    "url":      "https://openai.com/api/pricing",           // read this page
-    "sources":  ["web", "read"],    // override sources (default: ["auto"])
-    "model":    "flop:qwen/qwen3-14b",   // override model (default: server default)
-    "label":    "openai-pricing"    // tag in the output (default: auto)
-  }
-
-Either `q` or `url` is required; both can be present (url is appended to q).
-
-Output format (one JSON object per line)
------------------------------------------
-  {
-    "label":          "openai-pricing",
-    "q":              "...",
-    "answer":         "...",
-    "citations":      [...],
-    "charged_flop":   0.003,
-    "inference_flop": 1.824,   // null when no FLOP model was used
-    "latency_s":      2.1,
-    "error":          null      // set to a string on failure
-  }
+A job without `expect` passes when the page reads and every requested field is
+found. A job with `"expect": {"error": "bad_url"}` passes only if Scout refuses
+it with that code, which is how the agent checks the guards. Exit status is 0
+only if every job passes, so the script can gate a deploy.
 """
 
 import argparse
 import json
+import re
 import sys
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
+UA = 'flop-scout-test-agent/1.0 (+https://github.com/0xBobaAI/flop-scout/tree/main/agent)'
+MAX_CHARS = 20000
 
-# --- helpers -------------------------------------------------------
+# What each field looks like in the Markdown the reader returns. Ordered from
+# most to least specific; the first pattern with a match wins.
+_PRICE = r'(?:US\$|\$|€|£|¥)\s?\d[\d,]*(?:\.\d{1,2})?'
+EXTRACTORS = {
+    'price': [re.compile(_PRICE)],
+    'token_price': [
+        re.compile(r'(?:\$|US\$)\s?\d+(?:\.\d+)?\s*(?:/|per)\s*(?:1M|1 ?million|million|M)\b(?:\s*(?:input|output)?\s*tokens?)?', re.I),
+        re.compile(r'(?:\$|US\$)\s?\d+(?:\.\d+)?\s*(?:/|per)\s*(?:1K|1,000|thousand)\s*tokens?', re.I),
+    ],
+    'availability': [re.compile(r'\b(?:in stock(?: \(\d+ available\))?|out of stock|sold out|pre-?order|available now|unavailable)\b', re.I)],
+    'rating': [re.compile(r'\b(?:One|Two|Three|Four|Five) stars?\b|\b\d(?:\.\d)?\s?(?:/|out of)\s?5\b', re.I)],
+}
 
-def _post(base: str, path: str, payload: dict, timeout: float = 90) -> dict:
-    url = base.rstrip('/') + path
-    data = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        url, data=data,
-        headers={'Content-Type': 'application/json', 'User-Agent': 'flop-scout-agent/1.0'},
-        method='POST',
-    )
+
+class MCPError(Exception):
+    pass
+
+
+class MCPClient:
+    """Minimal Streamable HTTP client: one JSON-RPC message per POST, JSON replies."""
+
+    def __init__(self, url: str, timeout: float = 90):
+        self.url, self.timeout, self._id = url, timeout, 0
+
+    def _post(self, payload: dict):
+        req = urllib.request.Request(
+            self.url, data=json.dumps(payload).encode(), method='POST',
+            headers={'Content-Type': 'application/json', 'User-Agent': UA,
+                     'Accept': 'application/json, text/event-stream'})
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+                body = r.read()
+                return json.loads(body) if body else None
+        except urllib.error.HTTPError as e:
+            raise MCPError(f'HTTP {e.code}: {e.read(300).decode(errors="replace")}') from None
+        except urllib.error.URLError as e:
+            raise MCPError(f'unreachable: {e.reason}') from None
+
+    def call(self, method: str, params: dict | None = None) -> dict:
+        self._id += 1
+        msg = self._post({'jsonrpc': '2.0', 'id': self._id, 'method': method, 'params': params or {}})
+        if not isinstance(msg, dict):
+            raise MCPError(f'{method}: empty reply')
+        if 'error' in msg:
+            raise MCPError(f'{method}: {msg["error"].get("message")}')
+        return msg['result']
+
+    def initialize(self) -> dict:
+        info = self.call('initialize', {'protocolVersion': '2025-06-18', 'capabilities': {},
+                                        'clientInfo': {'name': 'flop-scout-test-agent', 'version': '1.0'}})
+        self._post({'jsonrpc': '2.0', 'method': 'notifications/initialized'})
+        return info
+
+    def tool(self, name: str, args: dict) -> tuple[bool, dict | str]:
+        """(ok, parsed body). Tool failures come back as isError, not exceptions."""
+        res = self.call('tools/call', {'name': name, 'arguments': args})
+        text = ''.join(c.get('text', '') for c in res.get('content', []) if c.get('type') == 'text')
+        try:
+            body = json.loads(text)
+        except ValueError:
+            body = text
+        return not res.get('isError'), body
+
+
+def extract(content: str, fields: list[str]) -> dict:
+    out = {}
+    for f in fields:
+        found = []
+        for rx in EXTRACTORS.get(f, []):
+            for m in rx.findall(content):
+                v = ' '.join(m.split()) if isinstance(m, str) else m
+                if v not in found:
+                    found.append(v)
+            if found:
+                break
+        out[f] = found[:5]
+    return out
+
+
+def check(job: dict, ok: bool, body, fields: dict) -> list[str]:
+    """Return the reasons a job failed; empty means it passed."""
+    exp = job.get('expect') or {}
+    if 'error' in exp:
+        if ok:
+            return [f'expected error {exp["error"]}, but the read succeeded']
+        got = body.get('error') if isinstance(body, dict) else None
+        return [] if got == exp['error'] else [f'expected error {exp["error"]}, got {got}']
+    if not ok:
+        code = body.get('error') if isinstance(body, dict) else None
+        msg = body.get('message') if isinstance(body, dict) else str(body)[:120]
+        return [f'read failed: {code}: {msg}']
+    problems = []
+    title = body.get('title') or ''
+    if 'title_contains' in exp and exp['title_contains'].lower() not in title.lower():
+        problems.append(f'title {title!r} lacks {exp["title_contains"]!r}')
+    if 'content_contains' in exp and exp['content_contains'] not in body.get('content', ''):
+        problems.append(f'content lacks {exp["content_contains"]!r}')
+    for f in job.get('extract', []):
+        want = exp.get(f)
+        got = fields.get(f) or []
+        if want is not None and want not in got:
+            problems.append(f'{f}: expected {want!r}, found {got[:3]}')
+        elif want is None and not got:
+            problems.append(f'{f}: nothing found')
+    return problems
+
+
+def run_job(mcp: MCPClient, job: dict, args) -> dict:
+    label = job.get('label') or job['url'][:40]
+    t0 = time.monotonic()
+    rec = {'label': label, 'url': job['url'], 'ts': round(time.time())}
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.load(resp)
-    except urllib.error.HTTPError as exc:
-        body = exc.read(2048).decode(errors='replace')
-        raise RuntimeError(f'HTTP {exc.code} from {path}: {body}') from exc
-
-
-def _get(base: str, path: str, timeout: float = 30) -> dict:
-    url = base.rstrip('/') + path
-    req = urllib.request.Request(
-        url, headers={'User-Agent': 'flop-scout-agent/1.0'})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.load(resp)
-
-
-# --- preflight -------------------------------------------------------
-
-def preflight(base: str) -> dict:
-    """Check the Scout instance is reachable and return its pricing + catalog."""
-    try:
-        pricing = _get(base, '/api/pricing')
-    except Exception as exc:
-        print(f'[preflight] /api/pricing failed: {exc}', file=sys.stderr)
-        pricing = {}
-
-    try:
-        catalog = _get(base, '/api/catalog')
-    except Exception as exc:
-        print(f'[preflight] /api/catalog failed (non-fatal): {exc}', file=sys.stderr)
-        catalog = {}
-
-    metering_raw = pricing.get('metering', 'unknown')
-    mode = metering_raw if isinstance(metering_raw, str) else metering_raw.get('mode', 'unknown')
-    sources = [s['id'] for s in catalog.get('sources', [])]
-    models  = [m['model'] for m in catalog.get('models', [])]
-
-    print(f'[preflight] metering={mode}  sources={len(sources)}  models={len(models)}')
-    if mode == 'nominal':
-        print('[preflight] NOTE: devnet -- charges computed but nothing debited')
-    return {'pricing': pricing, 'catalog': catalog}
-
-
-# --- quote -------------------------------------------------------
-
-def quote_job(base: str, job: dict) -> dict:
-    """Get a price estimate for a job without running it."""
-    q = _build_q(job)
-    payload = {
-        'sources': job.get('sources', ['auto']),
-        'q': q,
-    }
-    if 'model' in job:
-        payload['model'] = job['model']
-    return _post(base, '/api/quote', payload, timeout=60)
-
-
-# --- run -------------------------------------------------------
-
-def run_job(base: str, job: dict) -> dict:
-    """Run one job through scout_answer and return a normalised result dict."""
-    q       = _build_q(job)
-    label   = job.get('label') or _auto_label(q)
-    t0      = time.monotonic()
-
-    payload: dict = {
-        'q':       q,
-        'sources': job.get('sources', ['auto']),
-    }
-    if 'model' in job:
-        payload['model'] = job['model']
-
-    try:
-        resp = _post(base, '/api/answer', payload, timeout=200)
-    except Exception as exc:
-        return {
-            'label':          label,
-            'q':              q,
-            'answer':         None,
-            'citations':      [],
-            'charged_flop':   None,
-            'inference_flop': None,
-            'latency_s':      round(time.monotonic() - t0, 2),
-            'error':          str(exc),
-        }
-
-    # The API returns 'answers' (list of per-engine attempts) not a single 'answer'.
-    # Pick the first successful attempt; fall back to the first entry if all failed.
-    answers = resp.get('answers') or []
-    best = next((a for a in answers if not a.get('error')), None)
-    if best is None and answers:
-        best = answers[0]  # all failed; surface the error
-
-    answer_text = (best or {}).get('answer') or (best or {}).get('text') or ''
-    answer_error = (best or {}).get('error')
-
-    # citations come from search items, not from the answer itself
-    items = resp.get('items') or []
-    citations = [{'url': it.get('url'), 'title': it.get('title'), 'snippet': it.get('snippet')}
-                 for it in items if it.get('url')]
-
-    # charged_flop and inference_estimate are inside each answer attempt
-    charged = (best or {}).get('scout_charge_flop')
-    inf_est = (best or {}).get('inference_estimate') or {}
-    inf_flop = (inf_est.get('floor') or {}).get('cost_flop')
-
-    return {
-        'label':          label,
-        'q':              q,
-        'answer':         answer_text,
-        'citations':      citations,
-        'charged_flop':   charged,
-        'inference_flop': inf_flop,
-        'latency_s':      round(time.monotonic() - t0, 2),
-        'error':          answer_error,
-    }
-
-
-# --- utils -------------------------------------------------------
-
-def _build_q(job: dict) -> str:
-    """Compose the question string from job fields."""
-    parts = []
-    if 'q' in job:
-        parts.append(job['q'])
-    if 'url' in job:
-        # append the URL so the read source knows what to fetch
-        parts.append(f'Read and summarise: {job["url"]}')
-    if not parts:
-        raise ValueError(f'Job has neither "q" nor "url": {job}')
-    return '  '.join(parts)
-
-
-def _auto_label(q: str) -> str:
-    return q[:40].replace(' ', '-').lower().rstrip('-')
-
-
-# --- summary -------------------------------------------------------
-
-def print_summary(results: list[dict]) -> None:
-    ok      = [r for r in results if not r['error']]
-    failed  = [r for r in results if r['error']]
-    total_charged   = sum(r['charged_flop'] or 0 for r in ok)
-    total_inference = sum(r['inference_flop'] or 0 for r in ok)
-    avg_lat = (sum(r['latency_s'] for r in ok) / len(ok)) if ok else 0
-
-    print('\n-- Summary ------------------------------------------')
-    print(f'  jobs:            {len(results)}  ({len(ok)} ok, {len(failed)} failed)')
-    print(f'  charged FLOP:    {total_charged:.4f}')
-    print(f'  inference est.:  {total_inference:.4f}')
-    print(f'  avg latency:     {avg_lat:.1f}s')
-    if failed:
-        print(f'  failed jobs:')
-        for r in failed:
-            print(f'    [{r["label"]}] {r["error"]}')
-    print('----------------------------------------------------')
-
-
-# --- main -------------------------------------------------------
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description='Flop Scout scrape agent')
-    parser.add_argument('jobs', help='path to jobs JSON file')
-    parser.add_argument('--out',     default='results.jsonl', help='output JSONL file')
-    parser.add_argument('--base',    default='https://flopscout.com', help='Scout base URL')
-    parser.add_argument('--dry-run', action='store_true', help='quote only, do not run')
-    parser.add_argument('--verbose', action='store_true', help='print answers to stdout')
-    args = parser.parse_args()
-
-    jobs_path = Path(args.jobs)
-    if not jobs_path.exists():
-        print(f'error: jobs file not found: {jobs_path}', file=sys.stderr)
-        sys.exit(1)
-
-    jobs = json.loads(jobs_path.read_text(encoding='utf-8'))
-    if not isinstance(jobs, list):
-        print('error: jobs file must be a JSON array', file=sys.stderr)
-        sys.exit(1)
-
-    print(f'[agent] {len(jobs)} jobs  base={args.base}  out={args.out}')
-    preflight(args.base)
-
-    out_path = Path(args.out)
-    results  = []
-
-    for i, job in enumerate(jobs, 1):
-        label = job.get('label') or _auto_label(_build_q(job))
-        print(f'[{i}/{len(jobs)}] {label} ...', end=' ', flush=True)
-
-        if args.dry_run:
-            try:
-                q = quote_job(args.base, job)
-                print(f'quote: {q.get("total_flop")} FLOP')
-            except Exception as exc:
-                print(f'quote failed: {exc}')
-            continue
-
-        result = run_job(args.base, job)
-        results.append(result)
-
-        if result['error']:
-            print(f'ERROR: {result["error"]}')
+        ok, body = mcp.tool('scout_read', {'url': job['url'], 'max_chars': MAX_CHARS})
+    except MCPError as e:
+        rec.update(ok=False, passed=False, problems=[f'transport: {e}'],
+                   latency_s=round(time.monotonic() - t0, 2))
+        return rec
+    rec['latency_s'] = round(time.monotonic() - t0, 2)
+    content = body.get('content', '') if ok and isinstance(body, dict) else ''
+    fields = extract(content, job.get('extract', [])) if content else {}
+    problems = check(job, ok, body, fields)
+    rec.update(ok=ok, passed=not problems, problems=problems, fields=fields)
+    if isinstance(body, dict):
+        if ok:
+            rec.update(title=body.get('title'), final_url=body.get('final_url'),
+                       http_status=body.get('http_status'), chars=body.get('chars'),
+                       chars_total=body.get('chars_total'), cached=body.get('cached'),
+                       read_s=body.get('read_s'),
+                       scout_fee_flop=(body.get('pricing') or {}).get('total_flop'))
         else:
-            flop_str = f'{result["charged_flop"]:.4f}' if result["charged_flop"] is not None else 'n/a'
-            print(f'ok  {result["latency_s"]}s  {flop_str} FLOP  {len(result["citations"])} citations')
+            rec.update(error=body.get('error'), message=body.get('message'))
+    if args.verbose and content:
+        rec['content_head'] = content[:400]
 
-        if args.verbose and result.get('answer'):
-            print(f'\n--- {label} ---')
-            print(result['answer'][:800])
-            if len(result['answer']) > 800:
-                print('  [truncated]')
-            print()
+    if args.answer and ok and job.get('question'):
+        # A separate service and a separate charge: reported on its own, never
+        # folded into the read's fee or pass/fail.
+        q = f'{job["question"]} {job["url"]}'
+        keys = {'flop': args.flop_key} if args.flop_key else {}
+        t1 = time.monotonic()
+        try:
+            aok, ab = mcp.tool('scout_answer', {'q': q[:500], 'sources': ['page'], 'keys': keys})
+        except MCPError as e:
+            aok, ab = False, {'error': str(e)}
+        first = ((ab.get('answers') or [{}])[0]) if isinstance(ab, dict) else {}
+        rec['answer'] = {
+            'ok': bool(aok and first.get('answer')),
+            'text': (first.get('answer') or '')[:600],
+            'error': first.get('error') or (ab.get('error') if isinstance(ab, dict) else None),
+            'model': first.get('model'),
+            'scout_fee_flop': first.get('scout_quote_flop'),
+            'miner_cost_estimate_flop': ((first.get('inference_estimate') or {}).get('cost_flop')),
+            'latency_s': round(time.monotonic() - t1, 2),
+        }
+    return rec
 
-        # append immediately so a crash doesn't lose earlier results
-        with out_path.open('a', encoding='utf-8') as f:
-            f.write(json.dumps(result, ensure_ascii=False) + '\n')
 
-    if not args.dry_run and results:
-        print_summary(results)
-        print(f'[agent] results written to {out_path}')
+def main() -> int:
+    ap = argparse.ArgumentParser(description='Flop Scout test agent (MCP)')
+    ap.add_argument('jobs', help='JSON file with an array of jobs')
+    ap.add_argument('--base', default='https://flopscout.com', help='Scout base URL')
+    ap.add_argument('--out', default='agent-run.jsonl', help='append one JSON line per job here')
+    ap.add_argument('--pause', type=float, default=4.0,
+                    help='seconds between jobs; the shared reader allows about 18 reads a minute')
+    ap.add_argument('--answer', action='store_true', help='also ask each job\'s question via scout_answer')
+    ap.add_argument('--flop-key', default='', help='FLOP gateway key for --answer (never written to output)')
+    ap.add_argument('--verbose', action='store_true', help='keep the first 400 chars of each page in the output')
+    args = ap.parse_args()
+
+    jobs = json.loads(Path(args.jobs).read_text(encoding='utf-8'))
+    if not isinstance(jobs, list) or not all(isinstance(j, dict) and j.get('url') for j in jobs):
+        print('error: the jobs file must be a JSON array of objects with a "url"', file=sys.stderr)
+        return 2
+
+    mcp = MCPClient(args.base.rstrip('/') + '/mcp')
+    try:
+        info = mcp.initialize()
+        tools = {t['name'] for t in mcp.call('tools/list')['tools']}
+    except MCPError as e:
+        print(f'error: cannot reach Scout MCP at {mcp.url}: {e}', file=sys.stderr)
+        return 2
+    if 'scout_read' not in tools:
+        print(f'error: this Scout ({info["serverInfo"].get("version")}) has no scout_read tool', file=sys.stderr)
+        return 2
+    print(f'Scout {info["serverInfo"].get("version")} at {args.base}: {len(tools)} tools, '
+          f'protocol {info.get("protocolVersion")}. {len(jobs)} jobs.')
+
+    out = Path(args.out)
+    results = []
+    for i, job in enumerate(jobs, 1):
+        if i > 1 and args.pause > 0:
+            time.sleep(args.pause)
+        rec = run_job(mcp, job, args)
+        results.append(rec)
+        with out.open('a', encoding='utf-8') as f:     # append now: a crash keeps earlier jobs
+            f.write(json.dumps(rec, ensure_ascii=False) + '\n')
+        mark = 'PASS' if rec['passed'] else 'FAIL'
+        if rec.get('ok'):
+            got = '; '.join(f'{k}={v[:2]}' for k, v in (rec.get('fields') or {}).items())
+            detail = f'{rec.get("chars")}/{rec.get("chars_total")} chars{", cached" if rec.get("cached") else ""}. {got}'
+        else:
+            detail = f'{rec.get("error")}: {(rec.get("message") or "")[:70]}'
+        print(f'[{i}/{len(jobs)}] {mark} {rec["label"]:<22} {rec["latency_s"]:5.1f}s  {detail}')
+        for p in rec['problems']:
+            print(f'        - {p}')
+        if 'answer' in rec:
+            a = rec['answer']
+            print(f'        answer: {"ok" if a["ok"] else "no answer"} '
+                  f'({a.get("error") or a.get("model")}), fee {a.get("scout_fee_flop")} FLOP, '
+                  f'miner est. {a.get("miner_cost_estimate_flop")} FLOP')
+
+    passed = sum(r['passed'] for r in results)
+    reads = [r for r in results if r.get('ok')]
+    fresh = [r for r in reads if not r.get('cached')]
+    fee = sum(r.get('scout_fee_flop') or 0 for r in reads)
+    print(f'\n{passed}/{len(results)} passed. {len(reads)} pages read ({len(fresh)} fetched, '
+          f'{len(reads) - len(fresh)} from cache). Scout read fees: {fee:.3f} FLOP (nominal on devnet).')
+    if fresh:
+        lat = sorted(r['latency_s'] for r in fresh)
+        print(f'Fetch latency: median {lat[len(lat) // 2]:.1f}s, max {lat[-1]:.1f}s.')
+    print(f'Results appended to {out}')
+    return 0 if passed == len(results) else 1
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
