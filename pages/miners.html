@@ -1,113 +1,70 @@
-<section class="hero">
-  <p class="eyebrow">Miner board · live</p>
-  <h1>Every FLOP miner.<br><em>Ranked by what they settle.</em></h1>
-  <p class="lede">Settlement rebuilt session by session from the FLOP explorer, so anyone can check it. Rates are shown over all demand and over <span class="hl">independent demand</span>, without the one agent wallet that dominates the devnet. The 24-hour trend shows who is slipping now.</p>
+<section class="mb-head">
+  <div class="mb-title">
+    <h1>FLOP miners</h1>
+    <p>Settlement, price and capacity for every miner on the network.</p>
+  </div>
+  <div class="mb-net">
+    <span class="dot" id="netDot"></span><span class="mono" id="netName">FLOP network</span>
+    <span class="mono c-muted" id="updated">loading…</span>
+  </div>
 </section>
 
-<section class="controls" aria-label="Filters">
-  <div class="filtergroup">
-    <span class="mlabel">Show</span>
+<section class="kpis" aria-label="Network">
+  <div class="kpi"><b id="kMiners">—</b><span>registered</span></div>
+  <div class="kpi"><b id="kPriced">—</b><span>priced</span></div>
+  <div class="kpi"><b id="kSessions">—</b><span>sessions 24h</span></div>
+  <div class="kpi">
+    <b id="kSettle">—</b>
+    <span>settled 24h
+      <span class="tip" tabindex="0" aria-label="About this number">?<span class="tip-box" role="tooltip">
+        Share of finished sessions in the last 24 hours that were paid.<br><br>
+        <b>Independent</b> leaves out agent wallets that opened more than 25% of the sessions; <span id="kDomTip">none do right now</span>.
+      </span></span>
+    </span>
+    <small id="kSettleInd"></small>
+  </div>
+  <div class="kpi"><b id="kCap">—</b><span>tokens / min</span></div>
+  <div class="kpi"><b id="kCountries">—</b><span>countries</span></div>
+</section>
+
+<nav class="tabs" role="tablist" aria-label="Views">
+  <button class="tab on" role="tab" data-tab="board" aria-selected="true" type="button">Miners <span class="chip-cnt" id="tMiners"></span></button>
+  <button class="tab" role="tab" data-tab="movers" aria-selected="false" type="button">24h movers <span class="chip-cnt" id="tMovers"></span></button>
+  <button class="tab" role="tab" data-tab="regions" aria-selected="false" type="button">Regions <span class="chip-cnt" id="tRegions"></span></button>
+  <button class="tab" role="tab" data-tab="models" aria-selected="false" type="button">Models <span class="chip-cnt" id="tModels"></span></button>
+  <button class="tab" role="tab" data-tab="scout" aria-selected="false" type="button">Served via Scout</button>
+</nav>
+
+<section class="panel on" id="p-board" role="tabpanel">
+  <div class="toolbar">
     <div class="chips" id="showChips">
       <button class="chip on" data-show="priced" type="button">Priced <span class="chip-cnt" id="cntPriced">—</span></button>
-      <button class="chip" data-show="active" type="button">Active <span class="chip-cnt" id="cntActive">—</span></button>
-      <button class="chip" data-show="movers" type="button">Movers <span class="chip-cnt" id="cntMovers">—</span></button>
+      <button class="chip" data-show="sessions" type="button">With sessions <span class="chip-cnt" id="cntSessions">—</span></button>
       <button class="chip" data-show="all" type="button">All <span class="chip-cnt" id="cntAll">—</span></button>
     </div>
-  </div>
-  <div class="filtergroup">
-    <span class="mlabel">Sort</span>
-    <div class="chips" id="sortChips">
-      <button class="chip on" data-sort="router" type="button">Router score</button>
-      <button class="chip" data-sort="history" type="button">24h trend</button>
-      <button class="chip" data-sort="price" type="button">Price</button>
-      <button class="chip" data-sort="capacity" type="button">Compute</button>
-      <button class="chip" data-sort="stake" type="button">Stake</button>
-      <button class="chip" data-sort="activity" type="button">Activity</button>
+    <div class="selects">
+      <label for="modelFilter">Model</label><select id="modelFilter"></select>
+      <label for="countryFilter">Country</label><select id="countryFilter"></select>
+      <input id="addrFilter" type="search" placeholder="Find address" aria-label="Find miner by address" autocomplete="off" spellcheck="false">
     </div>
   </div>
-  <div class="selects">
-    <label for="modelFilter">Model</label><select id="modelFilter"></select>
+  <div id="board">
+    <div class="skeleton" style="height:320px"></div>
   </div>
 </section>
 
-<section class="netstrip" aria-label="Network status">
-  <div class="netstate"><span class="dot" id="netDot"></span><span class="mono" id="netName">FLOP network</span><span id="netNote">checking…</span></div>
-  <div class="mono" id="updated">loading…</div>
-</section>
-
-<section class="workspace" aria-label="Miner board">
-  <div class="split">
-    <div id="board">
-      <div class="skeleton" style="height:96px"></div>
-      <div class="skeleton" style="height:96px;margin-top:10px"></div>
-      <div class="skeleton" style="height:96px;margin-top:10px"></div>
-    </div>
-
-    <aside class="card side" aria-label="Network summary">
-      <div class="side-head">
-        <p class="eyebrow">Network at a glance</p>
-        <h2>FLOP devnet</h2>
-        <p>Live from the explorer and gateway.</p>
-      </div>
-      <div class="side-sec">
-        <div class="stats two">
-          <div class="stat"><b id="stMiners">—</b><span>registered</span></div>
-          <div class="stat"><b id="stPriced">—</b><span>priced</span></div>
-          <div class="stat"><b id="stActive">—</b><span>active now</span></div>
-          <div class="stat"><b id="stCap">—</b><span>tok/min</span></div>
-        </div>
-        <div class="net-spark-row" id="netSparkRow" hidden>
-          <span class="mlabel">Network settle rate</span>
-          <div id="netSpark"></div>
-          <span class="mono" id="netSparkVal"></span>
-        </div>
-        <p class="note" id="priceNote" hidden></p>
-        <p class="note" id="domNote" hidden></p>
-      </div>
-      <div class="side-sec">
-        <h3>Smart router</h3>
-        <div id="routerBox"><p class="note">Loading…</p></div>
-      </div>
-      <div class="side-sec">
-        <h3>Models on devnet</h3>
-        <div id="modelList" class="srcpick"></div>
-      </div>
-      <div class="side-sec">
-        <h3>Reading the card</h3>
-        <div class="ledger">
-          <div class="lrow ok"><span class="lmark"></span><div><div class="lname">Priced &amp; active</div><div class="lval">Offering inference now</div></div></div>
-          <div class="lrow"><span class="lmark"></span><div><div class="lname">Priced, expired</div><div class="lval">Offer window closed. May return.</div></div></div>
-          <div class="lrow"><span class="lmark"></span><div><div class="lname">Registered only</div><div class="lval">On-chain, not offering inference now</div></div></div>
-        </div>
-        <p class="note">Prices: devnet FLOP per G<sub>n</sub>, not market USD. GPU specs are self-reported. Settlement counts finished sessions from <a href="/api/sessions/coverage">the explorer's record</a>; open sessions are not counted either way.</p>
-      </div>
-    </aside>
-  </div>
-</section>
-
-<section class="band">
-  <div class="band-head">
-    <p class="eyebrow">Leaderboard</p>
-    <h2>Miners that served Scout requests.</h2>
-    <p>Ranked by requests routed through Scout, from settled receipts in Scout's ledger.</p>
-  </div>
-  <div id="leader"></div>
-</section>
-
-<section class="band">
-  <div class="band-head">
-    <p class="eyebrow">Settlement trend</p>
-    <h2>Who is getting better, and who is slipping.</h2>
-    <p>24-hour change in settlement rate. 100% yesterday and 60% today is the miner that burns your retries.</p>
-  </div>
+<section class="panel" id="p-movers" role="tabpanel" hidden>
   <div id="movers"></div>
 </section>
 
-<section class="band">
-  <div class="band-head">
-    <p class="eyebrow">Network reach</p>
-    <h2>Where inference runs.</h2>
-    <p>Countries reported by priced miners.</p>
-  </div>
-  <div id="countryGrid"></div>
+<section class="panel" id="p-regions" role="tabpanel" hidden>
+  <div id="regions"></div>
+</section>
+
+<section class="panel" id="p-models" role="tabpanel" hidden>
+  <div id="models"></div>
+</section>
+
+<section class="panel" id="p-scout" role="tabpanel" hidden>
+  <div id="leader"></div>
 </section>

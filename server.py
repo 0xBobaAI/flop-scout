@@ -1113,17 +1113,22 @@ async def miner_explorer():
     models_out = []
     total_cap = 0
     gateway_countries: set[str] = set()
+    # The gateway reports datacenter countries per model, not per miner. A
+    # miner's country is therefore known only when every model it serves
+    # narrows to the same single country; otherwise it is one of a set.
+    model_countries: dict[str, set] = {}
     for x in (models_json or {}).get('data', []):
         xf = x.get('x-flop', {})
         cap = xf.get('capacity_tpm') or 0
         total_cap += cap
-        for dc in xf.get('datacenters', []) or []:
-            gateway_countries.add(dc.get('country_code'))
+        mc = {dc.get('country_code') for dc in (xf.get('datacenters') or []) if dc.get('country_code')}
+        model_countries[x['id']] = mc
+        gateway_countries |= mc
         ps_list = xf.get('price_sources', [])
         active_cnt = sum(1 for ps in ps_list if _parse_dt(ps.get('expires_at')) > now)
         models_out.append({'id': x['id'], 'name': x.get('name') or x['id'],
                            'miners': len(ps_list), 'active_miners': active_cnt,
-                           'capacity_tpm': cap,
+                           'capacity_tpm': cap, 'countries': sorted(mc),
                            'price_prompt': (x.get('pricing') or {}).get('prompt')})
         for ps in ps_list:
             addr = ps.get('miner_address')
@@ -1138,6 +1143,15 @@ async def miner_explorer():
                 pm['best_price'] = p_val
             if _parse_dt(ps.get('expires_at')) > now:
                 pm['active'] = True
+
+    for pm in priced.values():
+        cand = None
+        for mid in set(pm['models']):
+            mc = model_countries.get(mid) or set()
+            cand = set(mc) if cand is None else cand & mc
+        cand = sorted(cand or [])
+        pm['country'] = cand[0] if len(cand) == 1 else None
+        pm['country_candidates'] = cand if len(cand) > 1 else []
 
     # 3) local perf from receipts log
     perf: dict[str, dict] = {}
@@ -1180,6 +1194,8 @@ async def miner_explorer():
             'models': list(set(pm.get('models') or [])),
             'best_price': pm.get('best_price'),
             'capacity_tpm': pm.get('capacity_tpm'),
+            'country': pm.get('country'),
+            'country_candidates': pm.get('country_candidates') or [],
             # explorer chain info
             'is_active': rec.get('isActive', False),
             'blacklisted': rec.get('blacklisted', False),
@@ -1241,6 +1257,14 @@ async def miner_explorer():
             'capacity_tpm': total_cap if prices_known else None,
             'models': len(models_out) if prices_known else None,
             'countries': sorted(c for c in gateway_countries if c),
+            # Per country: models served there and their priced miners. A
+            # miner offering several models can count under several countries.
+            'country_detail': [
+                {'country': c,
+                 'models': sorted(m['name'] for m in models_out if c in m['countries']),
+                 'priced_miners': sum(m['miners'] for m in models_out if c in m['countries']),
+                 'exact_miners': sum(1 for p in priced.values() if p.get('country') == c)}
+                for c in sorted(c for c in gateway_countries if c)],
             # Network settle rate per interval, from explorer sessions.
             'settle_series': net_series,
             # Agent wallets above 25% of the day's sessions, and the network

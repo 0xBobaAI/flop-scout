@@ -259,7 +259,7 @@ details.pk[open] summary::before{content:"▾"}
 }
 
 /* ── chrome ───────────────────────────────────────────────────────────────── */
-.shell,.topbar,.foot,.hero,.controls,.netstrip,.workspace,.band{
+.shell,.topbar,.foot,.hero,.controls,.netstrip,.workspace,.band,.mb-head,.kpis,.tabs,.panel{
   width:100%;max-width:var(--shell);margin-inline:auto;padding-inline:32px}
 /* one left edge on every page: the hero no longer narrows to 1100px on sub-pages */
 .hero h1,.hero .lede{max-width:none}
@@ -583,32 +583,9 @@ details.pk[open] summary::before{content:"▾"}
 .srcpick label{min-height:26px}
 .srcpick label:hover small{color:var(--secondary)}
 
-/* ── miners: one compact row, not a dense card ───────────────────────────── */
-.miner-row{padding:12px 15px;margin-bottom:6px}
-.miner-live{box-shadow:0 0 0 1px color-mix(in srgb,var(--teal) 22%,transparent),var(--sh-1),var(--inner-hi)}
-.miner-best{box-shadow:0 0 0 1.5px var(--teal),var(--sh-2),var(--inner-hi)}
-.miner-best .miner-rank{color:var(--teal);font-weight:700}
-.mr-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .spark{flex:none;display:block;overflow:visible}
-.net-spark-row{display:flex;align-items:center;gap:9px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line-2);font-size:11px;color:var(--muted)}
-.net-spark-row .mlabel{flex:none}
-.miner-rank{min-width:22px;font:700 11px/1 var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
-.miner-addr{font-size:12px;color:var(--secondary)}
-.miner-copy{opacity:0;transition:opacity .16s var(--ease)}
-.miner-row:hover .miner-copy,.miner-copy:focus-visible{opacity:1}
-@media (hover:none){.miner-copy{opacity:1}}
-.mr-explorer{margin-left:auto;font-size:11px;white-space:nowrap}
-.miner-bar-wrap{height:3px;margin:8px 0 0;border-radius:2px;background:var(--surface-3);overflow:hidden}
-.miner-bar{height:100%;border-radius:2px;background:var(--grad-brand);transition:width .5s var(--ease-out)}
-/* up to four key numbers, label under value — reads at a glance, no column grid to misalign */
-.mr-facts{display:flex;gap:22px;flex-wrap:wrap;margin-top:10px}
-.mf{display:flex;flex-direction:column;gap:1px}
-.mf b{font:600 13.5px var(--display);color:var(--ink);letter-spacing:-.01em}
-.mf small{font:9.5px/1 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
-.mr-foot{margin-top:9px;padding-top:9px;border-top:1px solid var(--line-2);font-size:11.5px;color:var(--muted)}
 .board-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;flex-wrap:wrap}
 .board-head h3{margin:0;font:600 12.5px/1.4 var(--display);color:var(--secondary)}
-@media(max-width:640px){.mr-facts{gap:16px}.mr-explorer{margin-left:0;flex:none;width:auto;order:9}}
 
 /* ── tables ───────────────────────────────────────────────────────────────── */
 .table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--r);background:var(--surface);box-shadow:var(--sh-1)}
@@ -626,14 +603,10 @@ details.pk[open] summary::before{content:"▾"}
 .ltable a:hover{color:var(--teal-ink)}
 .tr-active td:first-child{box-shadow:inset 2px 0 0 var(--teal)}
 
-.cg{display:flex;flex-wrap:wrap;gap:8px}
-.cc-cell{
   display:flex;align-items:center;gap:7px;padding:7px 11px;background:var(--surface);
   border:1px solid var(--line);border-radius:var(--r-sm);font-size:12.5px;
   box-shadow:var(--sh-1);transition:border-color .16s var(--ease),transform .16s var(--ease-out);
 }
-.cc-cell:hover{border-color:var(--line-strong);transform:translateY(-1px)}
-.cc-flag{font-size:17px;line-height:1}
 
 /* ── bands ────────────────────────────────────────────────────────────────── */
 .band{padding-block:clamp(36px,4.6vw,56px);border-top:1px solid var(--line);margin-top:44px}
@@ -830,7 +803,7 @@ dialog::backdrop{background:color-mix(in srgb,#0a1018 62%,transparent);backdrop-
   .foot{grid-template-columns:1fr 1fr}
 }
 @media(max-width:860px){
-  .shell,.topbar,.foot,.hero,.controls,.netstrip,.workspace,.band{padding-inline:20px}
+  .shell,.topbar,.foot,.hero,.controls,.netstrip,.workspace,.band,.mb-head,.kpis,.tabs,.panel{padding-inline:20px}
   .hero::after{inset-inline:20px}
   .nav{gap:0;overflow-x:auto;scrollbar-width:none;margin-left:0;background:none;padding:0}
   .nav::-webkit-scrollbar{display:none}
@@ -994,4 +967,90 @@ details.manual>summary:hover{color:var(--ink)}
   .docs-body .steps.four{grid-template-columns:1fr}
   .limits{grid-template-columns:1fr}
   .docs-pager{grid-template-columns:1fr}
+}
+
+/* ── miners page ─────────────────────────────────────────────────────────── */
+.mb-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;padding-block:28px 14px}
+.mb-title h1{margin:0;font:650 26px/1.15 var(--display);letter-spacing:-.025em}
+.mb-title p{margin:6px 0 0;font-size:13.5px;color:var(--secondary)}
+.mb-net{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--secondary)}
+
+.kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;padding-block:4px 18px}
+.kpi{position:relative;padding:13px 15px 12px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface);box-shadow:var(--sh-1)}
+.kpi b{display:block;font:650 22px/1.1 var(--display);letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.kpi span{display:flex;align-items:center;gap:6px;margin-top:5px;font:11px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.kpi small{display:block;margin-top:3px;font:11.5px var(--mono);color:var(--teal-ink)}
+
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none;
+  position:sticky;top:var(--t-sticky);z-index:20;background:var(--paper)}
+.tabs::-webkit-scrollbar{display:none}
+.tab{position:relative;border:0;background:none;padding:11px 14px 12px;font-size:13px;font-weight:600;color:var(--secondary);cursor:pointer;white-space:nowrap}
+.tab:hover{color:var(--ink)}
+.tab.on{color:var(--ink)}
+.tab.on::after{content:"";position:absolute;left:10px;right:10px;bottom:-1px;height:2px;border-radius:2px;background:var(--teal)}
+.panel{padding-block:16px 40px}
+.panel[hidden]{display:none}
+
+.toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.toolbar .selects input{min-height:34px;padding:6px 10px;border:1px solid var(--line-strong);border-radius:var(--r-sm);
+  background:var(--surface);font:12.5px var(--mono);color:var(--ink);width:170px}
+.toolbar .selects input:focus{outline:none;border-color:var(--teal);box-shadow:0 0 0 3px var(--teal-glow)}
+
+.board-table{max-height:calc(100vh - 230px);overflow:auto}
+.mtable{min-width:1060px}
+.mtable th{z-index:2;padding:9px 12px;white-space:nowrap}
+.th{border:0;background:none;padding:0;font:inherit;text-transform:inherit;letter-spacing:inherit;color:inherit;cursor:pointer}
+.cc{font:600 11.5px var(--mono);letter-spacing:.04em;color:var(--ink)}
+.th:hover{color:var(--ink)}
+.mtable th.on .th{color:var(--teal-ink)}
+.mtable td{padding:8px 12px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.mtable tr.best td{background:color-mix(in srgb,var(--teal) 7%,transparent)}
+.mtable .gpu{font-size:11.5px;color:var(--secondary)}
+.mtable small.n{font:11px var(--mono);color:var(--muted)}
+.mcell{display:inline-flex;align-items:center;gap:7px}
+.mcell a{color:var(--ink)}
+.copy{border:0;background:none;padding:0 2px;color:var(--muted);cursor:pointer;opacity:0;font-size:13px}
+.mtable tr:hover .copy,.copy:focus-visible{opacity:1}
+@media (hover:none){.copy{opacity:1}}
+
+.sd{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--line-strong);flex:none}
+.sd.on{background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 18%,transparent)}
+.sd.mid{background:var(--amber)}
+
+.sc{position:relative;display:inline-flex;align-items:center;width:64px;height:20px;border-radius:5px;background:var(--surface-3);overflow:hidden}
+.sc i{position:absolute;inset:0 auto 0 0;background:color-mix(in srgb,var(--teal) 30%,transparent)}
+.sc.mid i{background:color-mix(in srgb,var(--amber) 30%,transparent)}
+.sc.low i{background:color-mix(in srgb,var(--err) 26%,transparent)}
+.sc b{position:relative;width:100%;text-align:center;font:600 12px var(--mono)}
+
+.board-foot{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:12px}
+.board-foot .legend{margin-left:auto;display:flex;align-items:center;gap:6px;color:var(--muted)}
+.board-foot .legend .sd{margin-left:8px}
+
+.tip{position:relative;display:inline-grid;place-items:center;width:15px;height:15px;margin-left:5px;border:1px solid var(--line-strong);
+  border-radius:50%;font:600 10px/1 var(--display);text-transform:none;letter-spacing:0;color:var(--muted);cursor:help;vertical-align:middle}
+.tip:hover,.tip:focus{color:var(--ink);border-color:var(--teal);outline:none}
+.tip-box{position:absolute;top:calc(100% + 8px);left:50%;transform:translateX(-50%);z-index:100;width:310px;padding:12px 14px;
+  border:1px solid var(--line-strong);border-radius:var(--r-sm);background:var(--surface);box-shadow:var(--sh-3);
+  font:400 12px/1.55 var(--display);text-align:left;white-space:normal;color:var(--secondary);
+  opacity:0;visibility:hidden;transition:opacity .14s var(--ease)}
+.tip-box b{color:var(--ink)}
+.tip:hover .tip-box,.tip:focus .tip-box,.tip:focus-within .tip-box{opacity:1;visibility:visible}
+/* on pages that run the tooltip script, the in-place box stays hidden and a copy floats over everything */
+.js-tips .tip .tip-box{display:none}
+.tip-float{position:fixed;z-index:1000;opacity:1;visibility:visible;transform:none;pointer-events:none}
+.kpi .tip-box{left:auto;right:-8px;transform:none}
+
+.mv-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.mv h3{margin:0 0 9px;font:600 14px var(--display)}
+.fine{margin:10px 0 0;font-size:12px;line-height:1.6;color:var(--muted);max-width:90ch}
+
+@media(max-width:1080px){
+  .kpis{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .mv-grid{grid-template-columns:1fr}
+  .board-table{max-height:none}
+}
+@media(max-width:560px){
+  .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .toolbar .selects input{width:100%}
 }

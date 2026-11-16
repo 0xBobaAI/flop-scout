@@ -106,9 +106,8 @@ def footer() -> str:
     return f'''<footer class="foot">
   <div>
     <div class="fbrand">{LOGO}<span>flop<span style="font-weight:400;color:var(--teal)">scout</span></span></div>
-    <p>Search and page reading for AI agents. Priced per call in FLOP.</p>
-    <p>Independent tool built on the FLOP devnet. Not affiliated with FLOP Labs.</p>
-    <p class="fine">Devnet activity earns nothing. Answers can be wrong — check the sources.</p>
+    <p>Miner analytics, search and page reading for AI agents on FLOP.</p>
+    <p class="fine">Independent project, not affiliated with FLOP Labs.</p>
   </div>
   <div>
     <div class="fnav-title">Product</div>
