@@ -29,7 +29,7 @@ import time
 
 import httpx
 
-EXPLORER_API = 'https://explorer.devnet.flop.network/api'
+from netcfg import EXPLORER_API
 PAGE = 100                 # the explorer caps limit at 100
 SETTLED = 'settled'
 TIMEDOUT = 'timedout'
@@ -58,6 +58,25 @@ INDEXES = (
 def init(db, lock) -> None:
     with lock:
         db.execute(SCHEMA)
+        db.execute('create table if not exists sync_state(key text primary key, value text)')
+        # One record per network. When FLOP_EXPLORER_URL changes (devnet ->
+        # testnet), sessions from the old network would otherwise be counted
+        # as the new network's history; the old rows are moved aside, not
+        # deleted, and the sync starts over.
+        prev = db.execute("select value from sync_state where key = 'explorer'").fetchone()
+        if prev and prev[0] != EXPLORER_API:
+            tag = ''.join(ch if ch.isalnum() else '_' for ch in prev[0])[-40:]
+            db.execute(f'alter table sessions rename to sessions_{tag}_{int(time.time())}')
+            # A renamed table keeps its indexes under their old names, and
+            # "create index if not exists" would then skip the new table.
+            for ix in ('sessions_opened', 'sessions_miner_opened', 'sessions_pending', 'sessions_open'):
+                db.execute(f'drop index if exists {ix}')
+            db.execute("delete from sync_state where key in ('backfill_offset', 'backfill_done', 'walk_oldest', "
+                       "'last_sync_at')")
+            db.execute(SCHEMA)
+            print(f'sessions: network changed from {prev[0]} to {EXPLORER_API}; old record archived')
+        db.execute("insert into sync_state(key, value) values ('explorer', ?) "
+                   "on conflict(key) do update set value = excluded.value", (EXPLORER_API,))
         for col in ('miner_paid text', 'aggregate_gn text'):
             try:
                 db.execute(f'alter table sessions add column {col}')

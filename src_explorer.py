@@ -25,7 +25,7 @@ Endpoints used (all public, CORS *):
 import re
 import time
 
-EXPLORER = 'https://explorer.devnet.flop.network'
+from netcfg import EXPLORER
 API = f'{EXPLORER}/api'
 
 _FLOP = 1e18

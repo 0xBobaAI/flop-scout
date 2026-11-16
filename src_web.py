@@ -14,7 +14,8 @@ import httpx
 # Optional deep-read backend. Point SCOUT_URL at your own Scout reader deployment
 # to enable the `web_read` source; leave unset and it degrades to search snippets.
 SCOUT = os.getenv('SCOUT_URL', '').rstrip('/')
-EXPLORER = 'https://explorer.devnet.flop.network/api'
+from netcfg import EXPLORER_API as EXPLORER
+from netcfg import EXPLORER as EXPLORER_SITE
 UA = {'User-Agent': 'flop-scout/0.5'}
 _tag = re.compile(r'<[^>]+>')
 
@@ -356,7 +357,7 @@ async def flop_live(c, q, n, keys):
         j = health
         out.append({
             'title': 'FLOP devnet: chain health',
-            'url': 'https://explorer.devnet.flop.network',
+            'url': EXPLORER_SITE,
             'snippet': (f"Status {j.get('status')}, phase {j.get('phase')}, "
                         f"block {j.get('indexedHead')}, finality lag {j.get('headLag')} blocks · {now}")
         })
@@ -414,7 +415,7 @@ async def flop_miners_live(c, q, n, keys):
             rate = round(settled / closed, 2) if closed else None
             return {
                 'title': f"FLOP miner {pm['address'][:10]}…",
-                'url': f"https://explorer.devnet.flop.network/account/{pm['address']}",
+                'url': f"{EXPLORER_SITE}/account/{pm['address']}",
                 'snippet': (f"GPU: {gpu_str} · calibration: {cal.get('phase', '?')} "
                             f"({cal.get('empiricalCapGflopsPerSec') or cal.get('capGflopsPerSec', '?')} GFlop/s) · "
                             f"settled sessions: {settled} · "
@@ -439,7 +440,7 @@ async def flop_network_stats(c, q, n, keys):
     n = lambda v: f'{v:,}' if isinstance(v, (int, float)) else 'n/a'
     return [{
         'title': 'FLOP devnet: network statistics',
-        'url': 'https://explorer.devnet.flop.network',
+        'url': EXPLORER_SITE,
         'snippet': (f"Block {n(j.get('latestBlockNumber'))} · TPS {j.get('tps')} · "
                     f"registered miners: {j.get('registeredMiners')} · "
                     f"active validators: {j.get('activeValidators')} · "

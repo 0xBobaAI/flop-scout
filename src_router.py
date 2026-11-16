@@ -28,7 +28,7 @@ from typing import Optional
 
 log = logging.getLogger('flop.router')
 
-EXPLORER_API = 'https://explorer.devnet.flop.network/api'
+from netcfg import EXPLORER_API
 FLOP_GATEWAY = 'https://api.flop.network/v1'
 
 # How long to cache reliability from explorer

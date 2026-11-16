@@ -39,6 +39,7 @@ import flop_gateway
 import flop_estimate
 import llm
 import mcp_server
+import netcfg
 import pricing
 import probes
 import sessions
@@ -835,7 +836,7 @@ def _parse_dt(s):
         return datetime.fromtimestamp(0, timezone.utc)
 
 
-EXPLORER = 'https://explorer.devnet.flop.network/api'
+EXPLORER = netcfg.EXPLORER_API
 _miners_cache: dict = {'ts': 0, 'data': None}
 _MINERS_TTL = 90  # seconds
 # The explorer registry (~490 miners, five pages) took 11 s on a cold start.

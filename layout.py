@@ -10,6 +10,8 @@ Keeping the nav in one place means adding a section is a one-line change and the
 
 SITE = 'https://flopscout.com'
 
+from netcfg import EXPLORER as _EXPLORER
+
 # One number, derived once. Hardcoded "27 sources" was wrong within one release
 # in three separate files; every page now renders this instead.
 try:
@@ -121,7 +123,7 @@ def footer() -> str:
     <div class="fnav-title">Elsewhere</div>
     <nav aria-label="External">
       <a href="https://docs.flop.network" target="_blank" rel="noopener">FLOP docs ↗</a>
-      <a href="https://explorer.devnet.flop.network" target="_blank" rel="noopener">Explorer ↗</a>
+      <a href="{_EXPLORER}" target="_blank" rel="noopener">Explorer ↗</a>
       <a href="https://flop.finance/airdrop/" target="_blank" rel="noopener">Airdrop terms ↗</a>
     </nav>
   </div>
@@ -218,6 +220,7 @@ def page(*, title: str, description: str, path: str, body: str, scripts: list[st
 {footer()}
 {wallet_dialog()}
 {theme_script()}
+<script>window.FLOP_EXPLORER = {_EXPLORER!r};</script>
 <script src="{asset('wallet.js')}" defer></script>
 <script src="{asset('agent.js')}" defer></script>
 {tags}

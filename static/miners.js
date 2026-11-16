@@ -5,6 +5,9 @@ const fmtTpm = t => t == null ? '—' : t >= 1_000_000 ? (t / 1_000_000).toFixed
 const fmtFlop = v => v ? (v >= 1_000_000 ? (v / 1_000_000).toFixed(1) + 'M' : v >= 1_000 ? (v / 1_000).toFixed(1) + 'k' : v.toFixed(1)) : '0';
 const FLAG = cc => cc ? String.fromCodePoint(...[...cc.toUpperCase()].map(c => 0x1F1E6 + c.charCodeAt(0) - 65)) : '';
 
+// Set by the page shell from FLOP_EXPLORER_URL, so a network switch needs no edit here.
+const EXPLORER = window.FLOP_EXPLORER || 'https://explorer.devnet.flop.network';
+
 let DATA = null;
 let SORT = 'router';
 let F_MODEL = '';
@@ -118,7 +121,7 @@ function minerCard(m, rank) {
     ${spark}
     <span class="miner-addr mono" title="${esc(m.address)}">${esc(short(m.address))}</span>
     <button class="btn small ghost miner-copy" data-addr="${esc(m.address)}" aria-label="Copy miner address" type="button">copy</button>
-    <a class="mono c-teal mr-explorer" href="https://explorer.devnet.flop.network/account/${esc(m.address)}" target="_blank" rel="noopener">explorer ↗</a>
+    <a class="mono c-teal mr-explorer" href="${EXPLORER}/account/${esc(m.address)}" target="_blank" rel="noopener">explorer ↗</a>
   </div>
   ${m.priced ? `<div class="miner-bar-wrap" title="Performance score ${bar}%"><div class="miner-bar" style="width:${bar}%"></div></div>` : ''}
   <div class="mr-facts">${facts || '<span class="c-muted">No pricing data</span>'}</div>
@@ -189,7 +192,7 @@ function minerTable(miners, offset) {
       <td class="mono">${m.cap_gflops || '—'}</td>
       <td class="mono">${m.stake_flop > 0 ? fmtFlop(m.stake_flop) : '—'}</td>
       <td style="font-size:11px">${gpu}</td>
-      <td><a class="mono c-teal" href="https://explorer.devnet.flop.network/account/${esc(m.address)}" target="_blank" rel="noopener">↗</a></td>
+      <td><a class="mono c-teal" href="${EXPLORER}/account/${esc(m.address)}" target="_blank" rel="noopener">↗</a></td>
     </tr>`;
   };
   return `<div class="table-wrap" style="margin-top:10px"><table class="ltable">
@@ -210,7 +213,7 @@ function renderLeader() {
     <thead><tr><th>#</th><th>Miner</th><th>Requests</th><th>Success</th><th>Avg latency</th><th>FLOP spent</th><th>GPU</th></tr></thead>
     <tbody>${top.map((m, i) => `<tr class="${m.active ? 'tr-active' : ''}">
       <td class="mono c-teal">#${i + 1}</td>
-      <td><a class="mono" href="https://explorer.devnet.flop.network/account/${esc(m.address)}" target="_blank" rel="noopener">${esc(short(m.address))}</a></td>
+      <td><a class="mono" href="${EXPLORER}/account/${esc(m.address)}" target="_blank" rel="noopener">${esc(short(m.address))}</a></td>
       <td class="mono">${m.calls}</td>
       <td class="mono ${m.success_rate >= 0.9 ? 'c-ok' : 'c-warn'}">${m.success_rate != null ? (m.success_rate * 100).toFixed(0) + '%' : '—'}</td>
       <td class="mono">${m.avg_latency_s != null ? m.avg_latency_s + 's' : '—'}</td>
