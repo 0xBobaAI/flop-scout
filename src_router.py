@@ -96,11 +96,13 @@ class MinerScore:
         # 1. Settlement signal. Independent demand first, smoothed towards the
         #    network rate; the explorer's lifetime counters only when a miner
         #    has no independent sessions at all.
+        #    Both are smoothed the same way: a lifetime 6/6 used to outrank a
+        #    week of 163/173 independent sessions.
         if self.ind_total > 0:
             cs = (self.ind_settled + PRIOR_RATE * PRIOR_WEIGHT) / (self.ind_total + PRIOR_WEIGHT)
             self.settle_basis = 'independent'
-        elif self.chain_total >= 5:
-            cs = self.chain_settled / self.chain_total
+        elif self.chain_total > 0:
+            cs = (self.chain_settled + PRIOR_RATE * PRIOR_WEIGHT) / (self.chain_total + PRIOR_WEIGHT)
             self.settle_basis = 'lifetime'
         else:
             cs = 0.5  # unknown → neutral
