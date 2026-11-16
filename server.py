@@ -655,11 +655,12 @@ def price_list():
 async def router_state():
     """Live miner ranking from the smart router — chain reliability + local perf."""
     snap = router.cached_snapshot(top_n=25)
+    # The warm-up runs in the background from startup, so an empty cache means
+    # it is already in flight; waiting on a second copy held this route for
+    # 19 s after a deploy. Answer now, say it is warming, refresh behind.
+    asyncio.create_task(router.refresh(client))
     if not snap['refreshed_at']:
-        await router.refresh(client)          # nothing cached yet: pay for it once
-        snap = router.cached_snapshot(top_n=25)
-    else:
-        asyncio.create_task(router.refresh(client))
+        snap['warming_up'] = True
     return snap
 
 

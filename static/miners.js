@@ -274,6 +274,10 @@ function renderRouter(data) {
   if (!el) return;
   const snap = data.router_snap;
   if (!snap) { el.innerHTML = '<p class="note">No router data yet.</p>'; return; }
+  if (snap.warming_up && !(snap.top || []).length) {
+    el.innerHTML = '<p class="note">The router is warming up after a restart. Reload in a minute.</p>';
+    return;
+  }
   const best = snap.best;
   const top = snap.top || [];
   const rows = top.slice(0, 8).map((m, i) => {
