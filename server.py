@@ -369,6 +369,11 @@ async def _responses(request, call_next):
     # Answers depend on live network state: never let a proxy or browser replay one.
     if request.url.path.startswith('/api/'):
         resp.headers['Cache-Control'] = 'no-store'
+    # Pages carry the hashed asset links, so a browser that reuses an old page
+    # also reuses the old scripts. With no header a browser may heuristically
+    # cache HTML; no-cache makes it revalidate on every load.
+    elif resp.headers.get('content-type', '').startswith('text/html'):
+        resp.headers.setdefault('Cache-Control', 'no-cache')
     resp.headers.setdefault('X-Content-Type-Options', 'nosniff')
     resp.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
     return resp
