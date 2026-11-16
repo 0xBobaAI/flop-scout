@@ -56,10 +56,16 @@ SITE = 'https://flopscout.com'
 
 @asynccontextmanager
 async def lifespan(_app):
-    try:
-        await router.startup(client)
-    except Exception as e:
-        print('router warm-up failed:', e)
+    # The router warm-up waits on the FLOP gateway, which has taken 2-35 s to
+    # answer (measured on restarts). Awaiting it here held the whole site down
+    # for that long after every deploy; the pages already answer from cache and
+    # refresh behind the response, so warm it in the background instead.
+    async def _warm_router():
+        try:
+            await router.startup(client)
+        except Exception as e:
+            print('router warm-up failed:', e)
+    asyncio.create_task(_warm_router())
     # Warm the model picker once so the first page load is not the one that pays
     # for a cold gateway round trip.
     asyncio.create_task(_warm_models())
