@@ -39,9 +39,20 @@ _FAIL_TTL = 45
 # Min sessions before we trust local stats
 _LOCAL_MIN_CALLS = 3
 # Reliability signal weights
-_W_CHAIN = 0.55   # on-chain settled/timeout
+_W_CHAIN = 0.55   # settlement: independent demand from sessions when known, lifetime counters otherwise
 _W_LOCAL = 0.35   # local latency-adjusted success rate
 _W_RECENCY = 0.10  # has the miner been seen recently (priced + not expired)
+
+# Per-miner settlement over independent demand, set by server.py from the
+# explorer session record: {address: (settled, timeouts)}. On the devnet one
+# agent wallet opens ~77% of sessions and causes most timeouts, so the
+# explorer's lifetime counters rank miners by which agents reached them. This
+# replaces them whenever a miner has independent sessions.
+INDEPENDENT: dict = {}
+# Bayesian prior: a miner with few sessions is pulled towards the network's
+# independent rate instead of jumping to 0% or 100% on two or three sessions.
+PRIOR_RATE = 0.8
+PRIOR_WEIGHT = 10
 
 
 @dataclass
@@ -62,8 +73,12 @@ class MinerScore:
     local_ok: int = 0
     local_latency: Optional[float] = None
     local_last_seen: Optional[float] = None
+    # independent demand (sessions), when known
+    ind_settled: int = 0
+    ind_timeout: int = 0
     # computed
     score: float = 0.0
+    settle_basis: str = 'unknown'
 
     @property
     def chain_total(self): return self.chain_settled + self.chain_timeout
@@ -74,12 +89,22 @@ class MinerScore:
             return None
         return self.local_ok / self.local_calls
 
+    @property
+    def ind_total(self): return self.ind_settled + self.ind_timeout
+
     def compute_score(self):
-        # 1. Chain signal
-        if self.chain_total >= 5:
+        # 1. Settlement signal. Independent demand first, smoothed towards the
+        #    network rate; the explorer's lifetime counters only when a miner
+        #    has no independent sessions at all.
+        if self.ind_total > 0:
+            cs = (self.ind_settled + PRIOR_RATE * PRIOR_WEIGHT) / (self.ind_total + PRIOR_WEIGHT)
+            self.settle_basis = 'independent'
+        elif self.chain_total >= 5:
             cs = self.chain_settled / self.chain_total
+            self.settle_basis = 'lifetime'
         else:
             cs = 0.5  # unknown → neutral
+            self.settle_basis = 'unknown'
         # 2. Local signal
         lr = self.local_rate
         if lr is None:
@@ -220,6 +245,8 @@ class _RouterState:
                 local_ok=lo.get('ok', 0),
                 local_latency=(lo['sum_lat'] / lo['calls']) if lo.get('calls', 0) >= _LOCAL_MIN_CALLS else None,
                 local_last_seen=lo.get('last_seen'),
+                ind_settled=(INDEPENDENT.get(addr) or (0, 0))[0],
+                ind_timeout=(INDEPENDENT.get(addr) or (0, 0))[1],
             )
             if ms.chain_total > 0:
                 ms.chain_rate = ms.chain_settled / ms.chain_total
@@ -251,6 +278,9 @@ class _RouterState:
                 'score': round(m.score, 3),
                 'chain_rate': round(m.chain_rate, 3) if m.chain_total else None,
                 'chain_sessions': m.chain_total,
+                'independent_rate': round(m.ind_settled / m.ind_total, 3) if m.ind_total else None,
+                'independent_sessions': m.ind_total,
+                'settle_basis': m.settle_basis,
                 'local_calls': m.local_calls,
                 'local_rate': round(m.local_rate, 3) if m.local_rate is not None else None,
                 'local_latency_s': round(m.local_latency, 1) if m.local_latency else None,

@@ -274,7 +274,10 @@ function renderRouter(data) {
   const best = snap.best;
   const top = snap.top || [];
   const rows = top.slice(0, 8).map((m, i) => {
-    const rate = m.chain_rate != null ? (m.chain_rate * 100).toFixed(0) + '%' : 'new';
+    // Independent-demand rate when the miner has any; the lifetime counter is a
+    // fallback and is marked, because the dominant devnet wallet skews it.
+    const rate = m.independent_rate != null ? (m.independent_rate * 100).toFixed(0) + '%'
+      : m.chain_rate != null ? (m.chain_rate * 100).toFixed(0) + '%*' : 'new';
     const sc = (m.score * 100).toFixed(0);
     const cls = m.score >= 0.5 ? 'c-ok' : m.score >= 0.3 ? 'c-warn' : 'c-err';
     return `<tr><td class="mono" style="font-size:11px">#${i+1} ${esc(m.address.slice(0,8))}…</td>
@@ -295,10 +298,10 @@ function renderRouter(data) {
     </div>
     <div class="table-wrap" style="border:0;box-shadow:none">
       <table class="ltable" style="font-size:12px;width:100%;min-width:0">
-        <thead><tr><th>Miner</th><th>Score</th><th>Chain %</th></tr></thead>
+        <thead><tr><th>Miner</th><th>Score</th><th>Settled</th></tr></thead>
         <tbody>${rows}</tbody></table>
     </div>
-    <p class="note" style="margin-top:8px">Score = 55% on-chain settle rate + 35% local latency/success + 10% active in gateway. Updates every 2 min.</p>`;
+    <p class="note" style="margin-top:8px">Score = 55% settle rate over independent demand, last 7 days (smoothed for miners with few sessions) + 35% Scout's own success and latency + 10% active in the gateway. * marks a miner with no independent sessions, scored on its lifetime counter instead. The gateway, not Scout, assigns miners.</p>`;
 }
 
 /* ---- sidebar ---- */

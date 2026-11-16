@@ -272,6 +272,7 @@ def miner_stats(db, lock, window: int = 86400, end: float | None = None) -> dict
             'sessions': s + t, 'settled': s, 'timeouts': t,
             'settle_rate': round(s / (s + t), 3) if s + t else None,
             'independent_sessions': si + ti,
+            'independent_settled': si,
             'independent_settle_rate': round(si / (si + ti), 3) if si + ti else None,
             'distinct_agents': len(m['agents']),
         }
@@ -344,6 +345,13 @@ def miner_history(db, lock, address: str, window: int = 604800, points: int = 96
             'open': sum(b['open'] for b in series),
             'first_session_at': round(rows[0][0]), 'last_session_at': round(rows[-1][0]),
             'series': series, 'source': 'explorer compute-channels, one row per session'}
+
+
+def independent_counts(db, lock, window: int = 7 * 86400) -> dict:
+    """{miner: (settled, timeouts)} over independent demand in the window."""
+    st = miner_stats(db, lock, window)
+    return {m: (v['independent_settled'], v['independent_sessions'] - v['independent_settled'])
+            for m, v in st.items() if v['independent_sessions']}
 
 
 def board(db, lock, window: int = 86400, points: int = 12) -> tuple[dict, dict, list]:
@@ -432,8 +440,9 @@ def board(db, lock, window: int = 86400, points: int = 12) -> tuple[dict, dict, 
 class Syncer:
     """Runs the three sync jobs on a schedule and records what happened."""
 
-    def __init__(self, client, db, lock, every: int = 300):
+    def __init__(self, client, db, lock, every: int = 300, on_cycle=None):
         self.client, self.db, self.lock, self.every = client, db, lock, every
+        self.on_cycle = on_cycle
         self.last = {}
 
     async def run_once(self) -> dict:
@@ -454,4 +463,9 @@ class Syncer:
         await asyncio.sleep(20)                # let startup settle first
         while True:
             await self.run_once()
+            if self.on_cycle:
+                try:
+                    self.on_cycle()
+                except Exception as e:
+                    print('session on_cycle failed:', repr(e))
             await asyncio.sleep(self.every)

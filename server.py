@@ -150,7 +150,20 @@ with db_lock:
 
 sessions.init(db, db_lock)
 probes.init(db, db_lock)
-_session_syncer = sessions.Syncer(client, db, db_lock, every=int(os.getenv('SESSION_SYNC_S', '300')))
+def _feed_router() -> None:
+    """Give the router each miner's independent-demand settlement over 7 days."""
+    router.INDEPENDENT = sessions.independent_counts(db, db_lock, 7 * 86400)
+    net = sessions.network(db, db_lock, 7 * 86400, buckets=1)
+    if net['independent_settle_rate'] is not None and net['independent_sessions'] >= 100:
+        router.PRIOR_RATE = net['independent_settle_rate']
+
+
+_session_syncer = sessions.Syncer(client, db, db_lock, every=int(os.getenv('SESSION_SYNC_S', '300')),
+                                  on_cycle=_feed_router)
+try:
+    _feed_router()          # whatever is already stored, before the first sync
+except Exception as e:
+    print('router feed at start failed:', repr(e))
 _prober = probes.Prober(client, db, db_lock, llm.FLOP_URL, llm.flop_key,
                         lambda: llm.flop_models(client))
 
@@ -867,7 +880,18 @@ async def _fire_alerts() -> None:
     not set, the trigger is recorded in `fired_at` anyway so site-channel
     pollers see it via GET /api/alerts/check.
     """
-    rmap = _reliability_map(window=7200)      # 2 h: snapshots are 15 min apart, need >= 2 points
+    # Settlement over the last 24 h from explorer sessions, independent demand
+    # where a miner has enough of it: the raw rate fires on miners whose only
+    # sin was being reached by the one wallet that times out most sessions.
+    # A miner needs >= 5 finished sessions in the window to be judged at all.
+    rmap = {}
+    for m, v in sessions.miner_stats(db, db_lock, 86400).items():
+        if (v['independent_sessions'] or 0) >= 5:
+            rmap[m] = {'settle_rate': v['independent_settle_rate'], 'basis': 'independent'}
+        elif v['sessions'] >= 5:
+            rmap[m] = {'settle_rate': v['settle_rate'], 'basis': 'all'}
+    if not rmap:
+        rmap = _reliability_map(window=7200)   # fallback until the first session sync
     if not rmap:
         return
     now = time.time()
