@@ -73,8 +73,8 @@ def head(title: str, description: str, path: str = '/') -> str:
 <meta property="og:image:alt" content="Flop Scout — search and page reading that agents pay for in FLOP">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="{SITE}/static/og.png">
-<link rel="preload" href="/static/app.css" as="style">
-<link rel="stylesheet" href="/static/app.css">'''
+<link rel="preload" href="{asset('app.css')}" as="style">
+<link rel="stylesheet" href="{asset('app.css')}">'''
 
 
 def topbar(active: str = '') -> str:
@@ -167,6 +167,29 @@ def theme_script() -> str:
 })();</script>'''
 
 
+_STATIC_DIR = __import__('pathlib').Path(__file__).parent / 'static'
+_ASSET_V: dict = {}
+
+
+def asset(name: str) -> str:
+    """/static/<name>?v=<content hash>.
+
+    Cloudflare and browsers keep static files for hours, so a deploy used to
+    serve the new page with the old script until the cache expired. The hash
+    changes exactly when the file does, so a cached copy is only ever reused
+    while it is still current. Hashed once per process: deploys restart it.
+    """
+    v = _ASSET_V.get(name)
+    if v is None:
+        try:
+            import hashlib
+            v = hashlib.sha256((_STATIC_DIR / name).read_bytes()).hexdigest()[:10]
+        except OSError:
+            v = ''
+        _ASSET_V[name] = v
+    return f'/static/{name}?v={v}' if v else f'/static/{name}'
+
+
 def page(*, title: str, description: str, path: str, body: str, scripts: list[str],
          active: str = '', body_class: str = '', head_extra: str = '') -> str:
     """Assemble a complete document.
@@ -174,7 +197,7 @@ def page(*, title: str, description: str, path: str, body: str, scripts: list[st
     `scripts` are page-specific modules loaded after wallet.js, which every page
     needs because the topbar exposes the wallet button.
     """
-    tags = '\n'.join(f'<script src="/static/{s}" defer></script>' for s in scripts)
+    tags = '\n'.join(f'<script src="{asset(s)}" defer></script>' for s in scripts)
     body_cls = ' class="' + body_class + '"' if body_class else ''
     # A page body may write {{sources}} wherever the live count belongs.
     body = body.replace('{{sources}}', str(SOURCE_COUNT))
@@ -195,8 +218,8 @@ def page(*, title: str, description: str, path: str, body: str, scripts: list[st
 {footer()}
 {wallet_dialog()}
 {theme_script()}
-<script src="/static/wallet.js" defer></script>
-<script src="/static/agent.js" defer></script>
+<script src="{asset('wallet.js')}" defer></script>
+<script src="{asset('agent.js')}" defer></script>
 {tags}
 </body>
 </html>'''
