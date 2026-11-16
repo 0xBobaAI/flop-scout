@@ -22,3 +22,4 @@ mcp-key.*
 .github/
 _whl/
 gateway_models.json
+explorer_miners.json

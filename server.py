@@ -820,6 +820,15 @@ def _parse_dt(s):
 EXPLORER = 'https://explorer.devnet.flop.network/api'
 _miners_cache: dict = {'ts': 0, 'data': None}
 _MINERS_TTL = 90  # seconds
+# The explorer registry (~490 miners, five pages) took 11 s on a cold start.
+# The last good copy is kept on disk so the first page load after a deploy
+# renders it at once, marked stale, and refreshes behind the response.
+_MINERS_DISK = DATA / 'explorer_miners.json'
+try:
+    _miners_cache.update(ts=_MINERS_DISK.stat().st_mtime,
+                         data=json.loads(_MINERS_DISK.read_text(encoding='utf-8')))
+except (OSError, ValueError):
+    pass
 _miners_lock = asyncio.Lock()
 
 # Gateway model catalog. Cached because /api/catalog and /api/miners both need
@@ -1036,6 +1045,12 @@ async def _refresh_miners() -> bool:
             print('miner refresh failed:', e)
             return False
         _miners_cache.update(ts=time.time(), data=rows)
+        try:
+            tmp = _MINERS_DISK.with_suffix('.tmp')
+            tmp.write_text(json.dumps(rows), encoding='utf-8')
+            tmp.replace(_MINERS_DISK)
+        except OSError:
+            pass
         return True
 
 

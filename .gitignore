@@ -44,3 +44,4 @@ PROJECT.md
 
 # Gateway catalog cache written at runtime
 gateway_models.json
+explorer_miners.json
