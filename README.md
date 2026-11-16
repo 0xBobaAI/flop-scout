@@ -14,8 +14,8 @@ Five pages, one backend:
 
 | Surface | What it is |
 |---|---|
-| **`/`** | Answer — 30 sources, cited answers, itemised FLOP price, on-chain receipt |
-| **`/miners`** | Every registered miner ranked by settlement performance, with a 24h trend |
+| **`/`** | Every registered miner ranked by settlement, rebuilt from explorer sessions, with a 24h trend |
+| **`/answer`** | Cited answers from 30 sources, itemised FLOP price (paused until the testnet) |
 | **`/analytics`** | Network usage: per-model success, payer split, quoted vs charged |
 | **`/docs`** | Endpoints, pricing table, error codes, integration guide |
 | **`/api/*`** | The same data as JSON, for agents rather than people |
@@ -81,9 +81,27 @@ a rewrite.
 
 ## Why the miner ranking matters
 
-Before you can sell a service built on FLOP, you need to know which miners actually deliver. FLOP's explorer publishes the raw data as one unsorted row per miner of `settledCount` / `timeoutCount`. It does not interpret it.
+Before you can sell a service built on FLOP, you need to know which miners actually deliver.
 
-Scout does. Every miner gets a score:
+**Settlement history, rebuilt from sessions.** The FLOP explorer lists every compute
+session individually: agent, miner, status, payment, opening time. Scout copies that
+record (`GET /api/sessions/coverage`) and computes each miner's settlement over any
+window from it. Anyone can recompute every number from
+`explorer.devnet.flop.network/api/compute-channels`, which is the point: the history
+is checkable, and it reaches back as far as the explorer does.
+
+**Independent demand.** On the devnet one agent wallet opens most sessions and causes
+most timeouts (measured: ~76% of a day's sessions; the network settles ~25% of all
+sessions but ~80% of the rest). A miner's raw rate therefore says as much about who
+reached it as about the miner. Scout reports both: the raw rate, and the rate over
+sessions from agent wallets below 25% of the window's total.
+
+**Scout's own probes** (`probes.py`, `GET /api/probes`) are the part nobody else
+has: real, priced completions with a checkable answer, recording latency,
+correctness, cost and the serving miner. Disabled until the testnet, with the policy
+and hard caps published either way.
+
+The live score used by the router is still:
 
 ```
 score = 0.55 × on-chain settlement rate     (explorer /miner-reliability)
@@ -91,14 +109,8 @@ score = 0.55 × on-chain settlement rate     (explorer /miner-reliability)
       + 0.10 × currently priced in the gateway
 ```
 
-Unknown miners get a neutral 0.5 rather than a penalty. Refreshed every 2 minutes, surfaced on `/miners` and used before each inference call.
-
-Scout also records its own settlement history: every refresh writes each miner's
-settled and timed-out counts to SQLite at most every 15 minutes, kept for 30 days.
-That turns the score into a **direction** — `GET /api/reliability` and the Movers view
-on `/miners` answer "who is degrading right now", which a snapshot cannot.
-
-This is the piece with no equivalent elsewhere: a continuously updated, public read on which part of the network works — and in which direction.
+Unknown miners get a neutral 0.5 rather than a penalty. The router is advisory: the
+FLOP gateway assigns the miner.
 
 ---
 
@@ -125,7 +137,7 @@ This is the piece with no equivalent elsewhere: a continuously updated, public r
 **Interface**
 - Light and dark, system-aware, persisted, no flash on first paint
 - WCAG AA contrast in both themes (measured, not eyeballed)
-- Sticky nav, deep-linkable questions (`/?q=…`), single miner views (`/miners?m=…`)
+- Sticky nav, deep-linkable questions (`/answer?q=…`), single miner views (`/?m=…`)
 
 ---
 

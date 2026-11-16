@@ -20,7 +20,7 @@ import json
 
 import httpx
 
-SERVER_INFO = {'name': 'flop-scout', 'title': 'Flop Scout', 'version': '0.7.0'}
+SERVER_INFO = {'name': 'flop-scout', 'title': 'Flop Scout', 'version': '0.8.0'}
 # Newest first. The client's requested version is echoed when we know it,
 # otherwise we answer with our newest and let the client decide.
 SUPPORTED = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']
@@ -139,16 +139,17 @@ TOOLS = [
      'annotations': {'readOnlyHint': True, 'idempotentHint': True, 'openWorldHint': True}},
     {'name': 'flop_miner_history',
      'title': 'Settlement history of one miner',
-     'description': ("Return one miner's settlement history from Scout's 15-minute snapshots, up to 30 days: "
-                     "settle_rate and sessions for the window, span_s, and series[] (ts, settled, timeouts, "
-                     "settle_rate measured from the window start). Reads Scout's local database only. A short span_s "
-                     "means few snapshots, not a stable rate. Returns an error if Scout has never snapshotted the "
-                     "address. To compare all miners use flop_miner_ranking."),
+     'description': ("Return one miner's settlement record, rebuilt from individual sessions in the FLOP explorer, "
+                     "up to 90 days: settled, timeouts, settle_rate, independent_settle_rate (excluding agent wallets "
+                     "that opened over 25% of the window's sessions), distinct_agents, and series[] (ts, settled, "
+                     "timeouts, open, settle_rate per bucket). Open sessions are counted separately, never as a "
+                     "result. Errors if the miner has no sessions in the window. To compare all miners use "
+                     "flop_miner_ranking."),
      'inputSchema': {'type': 'object', 'required': ['address'], 'properties': {
          'address': {'type': 'string',
                      'description': 'SS58 miner address, e.g. from flop_miner_ranking top[].address.'},
-         'window': {'type': 'integer', 'minimum': 3600, 'maximum': 2592000, 'default': 604800,
-                    'description': 'Lookback in seconds (7 days by default, 30 days at most).'},
+         'window': {'type': 'integer', 'minimum': 3600, 'maximum': 7776000, 'default': 604800,
+                    'description': 'Lookback in seconds (7 days by default, 90 days at most).'},
          'points': {'type': 'integer', 'minimum': 2, 'maximum': 500, 'default': 96,
                     'description': 'Maximum series points; the first and last snapshot are always kept.'}}},
      'annotations': {'readOnlyHint': True, 'idempotentHint': True, 'openWorldHint': False}},
@@ -192,7 +193,7 @@ _ROUTES = {
     'scout_pricing': ('GET', '/api/pricing', None),
     'flop_inference_prices': ('GET', '/api/inference-prices', 'query'),
     'flop_miner_ranking': ('GET', '/api/router', None),
-    'flop_miner_history': ('GET', '/api/miners/{address}/history', 'path+query'),
+    'flop_miner_history': ('GET', '/api/sessions/miners/{address}', 'path+query'),
     'flop_alert_subscribe': ('POST', '/api/alerts', 'json'),
     'flop_alert_check': ('GET', '/api/alerts/check', 'query'),
 }

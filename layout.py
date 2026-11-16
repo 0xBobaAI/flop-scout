@@ -19,8 +19,8 @@ except Exception:          # a page must still render if the registry breaks
     SOURCE_COUNT = 0
 
 NAV = [
-    ('/', 'Answer', 'Answers'),
-    ('/miners', 'Miners', 'Miners'),
+    ('/', 'Miners', 'Miners'),
+    ('/answer', 'Answer', 'Answers'),
     ('/analytics', 'Analytics', 'Analytics'),
     ('/docs', 'Docs', 'Docs'),
 ]
@@ -111,8 +111,8 @@ def footer() -> str:
   <div>
     <div class="fnav-title">Product</div>
     <nav aria-label="Product">
-      <a href="/">Answer</a>
-      <a href="/miners">Miners</a>
+      <a href="/">Miners</a>
+      <a href="/answer">Answer</a>
       <a href="/analytics">Analytics</a>
       <a href="/docs">Docs</a>
     </nav>

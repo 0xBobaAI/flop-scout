@@ -40,6 +40,8 @@ import flop_estimate
 import llm
 import mcp_server
 import pricing
+import probes
+import sessions
 import src_router as router
 import src_web
 from registry import PRESETS, SOURCES
@@ -62,11 +64,15 @@ async def lifespan(_app):
     # for a cold gateway round trip.
     asyncio.create_task(_warm_models())
     asyncio.create_task(_alert_loop())
+    # Session history from the explorer: the one source of miner history that
+    # anyone can rebuild and check. Probes stay idle unless PROBES_ENABLED=1.
+    asyncio.create_task(_session_syncer.loop())
+    asyncio.create_task(_prober.loop())
     yield
     await client.aclose()
 
 
-app = FastAPI(title='Flop Scout', version='0.7.0', lifespan=lifespan,
+app = FastAPI(title='Flop Scout', version='0.8.0', lifespan=lifespan,
               docs_url='/api/swagger', openapi_url='/api/openapi.json', redoc_url=None)
 # The UI is same-origin, so CORS only matters for agents calling the API from a
 # browser context. Default to our own site rather than '*' — the API is public
@@ -135,6 +141,12 @@ with db_lock:
         last_rate real, fired_at real, active int default 1)''')
     db.execute('create index if not exists miner_alerts_address on miner_alerts(address)')
     db.commit()
+
+sessions.init(db, db_lock)
+probes.init(db, db_lock)
+_session_syncer = sessions.Syncer(client, db, db_lock, every=int(os.getenv('SESSION_SYNC_S', '300')))
+_prober = probes.Prober(client, db, db_lock, llm.FLOP_URL, llm.flop_key,
+                        lambda: llm.flop_models(client))
 
 _hits = defaultdict(deque)       # ip -> timestamps
 _recent = {}                     # hash(ip,q,model,sources,...) -> (ts, response)
@@ -873,7 +885,7 @@ async def _fire_alerts() -> None:
             msg = (f'⚠️ FLOP miner alert\n'
                    f'Miner: {miner_addr[:12]}…\n'
                    f'Settle rate: {rate:.1%} (threshold {threshold:.0%})\n'
-                   f'Via flopscout.com/miners')
+                   f'Via flopscout.com')
             if channel == 'telegram' and _TG_TOKEN and handle:
                 try:
                     import httpx as _httpx
@@ -1085,8 +1097,15 @@ async def miner_explorer():
                        'latency': round(lat, 1) if lat else None,
                        'spend': round(spend or 0, 2), 'last_seen': last}
 
-    hist = _reliability_map(86400)
-    series, net_series = _reliability_series(86400)
+    # History now comes from individual explorer sessions (sessions.py): it
+    # reaches back as far as the explorer does, anyone can recompute it, and it
+    # separates independent demand from the one wallet that dominates devnet.
+    # The old snapshot table is the fallback until the first sync has run.
+    hist, series, net_series = sessions.board(db, db_lock, 86400)
+    if not hist:
+        hist = _reliability_map(86400)
+        series, net_series = _reliability_series(86400)
+    session_net = sessions.network(db, db_lock, 86400, buckets=1) if hist else None
 
     # 4) merge
     out = []
@@ -1168,8 +1187,16 @@ async def miner_explorer():
             'capacity_tpm': total_cap if prices_known else None,
             'models': len(models_out) if prices_known else None,
             'countries': sorted(c for c in gateway_countries if c),
-            # Network settle rate per snapshot interval, from Scout's own history.
+            # Network settle rate per interval, from explorer sessions.
             'settle_series': net_series,
+            # Agent wallets above 25% of the day's sessions, and the network
+            # rate with and without them.
+            'sessions_24h': (None if not session_net else {
+                'sessions': session_net['sessions'], 'settle_rate': session_net['settle_rate'],
+                'independent_sessions': session_net['independent_sessions'],
+                'independent_settle_rate': session_net['independent_settle_rate'],
+                'dominant_agents': session_net['dominant_agents']}),
+            'history_source': 'explorer sessions' if session_net else 'snapshots',
         },
         'stale': age_s > _MINERS_TTL,
         'age_s': age_s,
@@ -1241,6 +1268,67 @@ def miner_history(address: str, window: int = 604800, points: int = 96):
         return _miner_history(address, window, points)
     except LookupError as e:
         raise HTTPException(404, {'error': 'no_history', 'message': str(e)})
+
+
+# ── Session history (explorer, per channel) and Scout's own probes ────────────────────
+
+@app.get('/api/sessions/coverage')
+def sessions_coverage():
+    """How much of the explorer's session record Scout holds, and when it last synced.
+
+    Every figure under /api/sessions is a count of compute channels the explorer
+    returned, so anyone can recompute it from
+    explorer.devnet.flop.network/api/compute-channels.
+    """
+    return {**sessions.coverage(db, db_lock), 'last_cycle': _session_syncer.last}
+
+
+@app.get('/api/sessions/network')
+def sessions_network(window: int = 86400, buckets: int = 24):
+    """Network settlement over a window, raw and over independent demand.
+
+    `dominant_agents` lists agent wallets that opened more than 25% of the
+    window's sessions. Their sessions are excluded from the independent rate,
+    because on the devnet one such wallet opens most sessions and causes most
+    timeouts, which says more about that agent than about the miners it reached.
+    Only finished sessions (settled or timed out) count.
+    """
+    window = max(3600, min(window, 90 * 86400))
+    buckets = max(1, min(buckets, 200))
+    return {**sessions.network(db, db_lock, window, buckets), 'coverage': sessions.coverage(db, db_lock)}
+
+
+@app.get('/api/sessions/miners')
+def sessions_miners(window: int = 86400, min_sessions: int = 1, limit: int = 200):
+    """Per-miner settlement over a window from individual sessions, raw and independent."""
+    window = max(3600, min(window, 90 * 86400))
+    stats = sessions.miner_stats(db, db_lock, window)
+    rows = [{'miner': m, **v} for m, v in stats.items() if v['sessions'] >= max(1, min_sessions)]
+    rows.sort(key=lambda r: (-(r['independent_sessions'] or 0), -(r['sessions'] or 0)))
+    return {'window_s': window, 'miners': rows[:max(1, min(limit, 2000))], 'total': len(rows),
+            'note': 'independent_* exclude agent wallets above 25% of the window\'s sessions; '
+                    'see /api/sessions/network for which.'}
+
+
+@app.get('/api/sessions/miners/{address}')
+def sessions_miner(address: str, window: int = 604800, points: int = 96):
+    try:
+        return sessions.miner_history(db, db_lock, address, window, points)
+    except LookupError as e:
+        raise HTTPException(404, {'error': 'no_sessions', 'message': str(e)})
+
+
+@app.get('/api/probes')
+def probes_state(window: int = 86400, limit: int = 50):
+    """Scout's own probe purchases: policy, caps, per-miner and per-model results, recent rows.
+
+    This is the half of the ranking that cannot be rebuilt from the explorer.
+    Disabled until the FLOP testnet opens; the policy is published either way.
+    """
+    window = max(3600, min(window, 30 * 86400))
+    return {'policy': probes.PROBE_POLICY, 'budget': probes.budget_state(db, db_lock),
+            'last_skip_reason': _prober.last_skip,
+            'summary': probes.summary(db, db_lock, window), 'recent': probes.recent(db, db_lock, limit)}
 
 
 @app.get('/api/miners/{address}')
@@ -1368,12 +1456,14 @@ def delete_alert(alert_id: int):
 
 
 PAGES = {
-    '/': dict(file='answer.html', active='/', title='Flop Scout — search and page reading that agents pay for in FLOP',
-               description=f'{len(SOURCES)} sources, cited answers and live on-chain FLOP data, priced per call and paid from your own wallet. No card, no account.',
-               scripts=['answer.js']),
-    '/miners': dict(file='miners.html', active='/miners', title='Flop Scout — every FLOP miner ranked by settlement performance',
-                    description='All registered FLOP miners with GPU, stake, calibration, capacity and an on-chain settlement score refreshed every two minutes.',
-                    scripts=['miners.js']),
+    '/answer': dict(file='answer.html', active='/answer', title='Flop Scout — cited answers, priced before you ask',
+                    description=f'{len(SOURCES)} sources, cited answers and live on-chain FLOP data, priced per call. '
+                                'Answers through FLOP miners resume when the testnet opens.',
+                    scripts=['answer.js']),
+    '/': dict(file='miners.html', active='/', title='Flop Scout — every FLOP miner ranked by settlement performance',
+              description='All registered FLOP miners with GPU, stake, capacity and settlement, rebuilt session by '
+                          'session from the explorer, with independent-demand rates and a 24-hour trend.',
+              scripts=['miners.js']),
     '/analytics': dict(file='analytics.html', active='/analytics', title='Flop Scout — demand analytics',
                        description='Aggregate demand for Scout: daily answers, unique clients, returning share and source success. No question text or client addresses.',
                        scripts=['analytics.js']),
@@ -1450,8 +1540,12 @@ Scout's own fee and the miner's inference cost are always reported as two separa
 ## Miner data
 
 - GET {SITE}/api/router: miners ranked by settlement rate and local success
-- GET {SITE}/api/miners: every registered miner with GPU, stake and 24h settlement delta
-- GET {SITE}/api/miners/{{address}}/history: one miner's settlement history, up to 30 days
+- GET {SITE}/api/miners: every registered miner with GPU, stake and 24h settlement from explorer sessions
+- GET {SITE}/api/sessions/miners: settlement per miner, rebuilt from individual explorer sessions. Raw rate and an independent rate that leaves out agent wallets above 25% of the window's sessions. `window` up to 90 days
+- GET {SITE}/api/sessions/miners/{{address}}: one miner's sessions over a window, bucketed
+- GET {SITE}/api/sessions/network: network settlement, raw and independent, and the dominant agent wallets
+- GET {SITE}/api/sessions/coverage: how much of the explorer's record Scout holds
+- GET {SITE}/api/probes: Scout's own probe purchases, policy and caps. Disabled until the testnet opens
 - POST {SITE}/api/alerts: subscribe to a settle-rate drop. Fields: `address` (SS58 or `*`), `threshold` (0–1), `channel` (`site` | `telegram`), `handle`
 - GET {SITE}/api/alerts/check: read triggered alerts back. `channel: "site"` delivers nothing on its own, you poll this
 - DELETE {SITE}/api/alerts/{{id}}: unsubscribe
@@ -1537,8 +1631,10 @@ def favicon():
 
 
 @app.get('/miners')
-async def miners_page():
-    return await _render('/miners')
+async def miners_page(request: Request):
+    # The miner board is the home page now. Keep /miners?m=<address> links working.
+    q = request.url.query
+    return RedirectResponse('/' + (f'?{q}' if q else ''), status_code=301)
 
 
 # ── Docs: one page per topic, sidebar tree, on-page TOC ──────────────────────
@@ -1635,8 +1731,17 @@ async def analytics_page():
     return await _render('/analytics')
 
 
+@app.get('/answer')
+async def answer_page():
+    return await _render('/answer')
+
+
 @app.get('/')
-async def index():
+async def index(request: Request):
+    # Answers used to live at / and were shared as /?q=<question>. Those links
+    # still land on the answer page with the question filled in.
+    if 'q' in request.query_params:
+        return RedirectResponse(f'/answer?{request.url.query}', status_code=301)
     return await _render('/')
 
 

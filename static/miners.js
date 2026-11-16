@@ -54,15 +54,26 @@ function trend(m) {
    whole point — a rate alone cannot distinguish "always been 94%" from
    "was 99% yesterday". */
 function trendBadge(m) {
-  if (!hasHistory(m)) return '<span class="kind grey" title="Appears once Scout has two settlement snapshots">no history yet</span>';
+  if (!hasHistory(m)) return '<span class="kind grey" title="No finished sessions in the last 24 hours">no sessions 24h</span>';
   const d = trend(m);
-  if (d === undefined) {
-    return `<span class="kind grey" title="${m.history_24h.sessions} sessions in this window, none before it">new · ${m.history_24h.sessions} sessions</span>`;
+  if (d === undefined || d === null) {
+    return `<span class="kind grey" title="${m.history_24h.sessions} finished sessions in 24h, none in the 24h before">new · ${m.history_24h.sessions} sessions</span>`;
   }
   const pct = (d * 100);
   const cls = pct > 0.5 ? 'ok' : pct < -0.5 ? 'warn' : '';
   const arrow = pct > 0.5 ? '▲' : pct < -0.5 ? '▼' : '▬';
-  return `<span class="kind ${cls === 'ok' ? '' : cls === 'warn' ? 'or' : 'grey'}" title="${m.history_24h.settled} settled / ${m.history_24h.timeouts} timed out in 24h">${arrow} ${pct >= 0 ? '+' : ''}${pct.toFixed(1)}% · 24h</span>`;
+  const basis = m.history_24h.change_basis === 'independent' ? 'independent demand' : 'all demand';
+  return `<span class="kind ${cls === 'ok' ? '' : cls === 'warn' ? 'or' : 'grey'}" title="${m.history_24h.settled} settled / ${m.history_24h.timeouts} timed out in 24h. Change vs the previous 24h, over ${basis}.">${arrow} ${pct >= 0 ? '+' : ''}${pct.toFixed(1)}% · 24h</span>`;
+}
+
+/* Settlement over demand Scout counts as independent: sessions from agent
+   wallets below 25% of the day's total. On devnet one wallet opens most
+   sessions and causes most timeouts, so this is the fairer read of a miner. */
+function independentChip(m) {
+  const h = m.history_24h;
+  if (!h || !h.independent_sessions) return '';
+  const r = h.independent_settle_rate;
+  return `<span class="kind ${r >= 0.8 ? '' : 'grey'}" title="${h.independent_sessions} sessions from independent agents in 24h (${h.distinct_agents} agents in total)">${(r * 100).toFixed(0)}% independent · ${h.independent_sessions}</span>`;
 }
 
 /* ---- miner row ---- */
@@ -103,6 +114,7 @@ function minerCard(m, rank) {
     <span class="miner-rank">#${rank}</span>
     <span class="kind ${statusCls}">${statusTxt}</span>
     ${trendChip}
+    ${independentChip(m)}
     ${spark}
     <span class="miner-addr mono" title="${esc(m.address)}">${esc(short(m.address))}</span>
     <button class="btn small ghost miner-copy" data-addr="${esc(m.address)}" aria-label="Copy miner address" type="button">copy</button>
@@ -191,7 +203,7 @@ function renderLeader() {
   if (!DATA) return;
   const top = DATA.miners.filter(m => m.calls > 0).sort((a, b) => (b.calls || 0) - (a.calls || 0)).slice(0, 15);
   if (!top.length) {
-    $('leader').innerHTML = `<p class="note">No Scout receipts yet. <a href="/">Ask a question</a> to create the first one.</p>`;
+    $('leader').innerHTML = `<p class="note">No Scout receipts yet. <a href="/answer">Ask a question</a> to create the first one.</p>`;
     return;
   }
   $('leader').innerHTML = `<div class="table-wrap"><table class="ltable">
@@ -211,10 +223,10 @@ function renderLeader() {
 function renderMovers() {
   const el = $('movers');
   if (!el || !DATA) return;
-  const withHist = DATA.miners.filter(m => hasHistory(m) && m.history_24h.sessions >= 3 && trend(m) !== undefined);
+  const withHist = DATA.miners.filter(m => hasHistory(m) && m.history_24h.sessions >= 3 && trend(m) != null);
   if (withHist.length < 2) {
     el.innerHTML = `<div class="empty"><h2>Not enough history yet.</h2>
-      <p>Scout takes a settlement snapshot every 15 minutes. After two, this ranks miners by how their settle rate moved.</p></div>`;
+      <p>Scout rebuilds settlement from the explorer's session record. Once two 24-hour windows are in, this ranks miners by how their settle rate moved.</p></div>`;
     return;
   }
   const sorted = [...withHist].sort((a, b) => (trend(b) ?? 0) - (trend(a) ?? 0));
@@ -225,7 +237,7 @@ function renderMovers() {
     const cls = d > 0.5 ? 'c-ok' : d < -0.5 ? 'c-err' : 'c-muted';
     return `<tr>
       <td class="mono">#${i + 1}</td>
-      <td><a class="mono" href="/miners?m=${esc(m.address)}">${esc(short(m.address))}</a></td>
+      <td><a class="mono" href="/?m=${esc(m.address)}">${esc(short(m.address))}</a></td>
       <td class="mono">${(m.history_24h.settle_rate * 100).toFixed(1)}%</td>
       <td class="mono ${cls}">${d >= 0 ? '+' : ''}${d.toFixed(1)} pp</td>
       <td class="mono">${m.history_24h.sessions}</td>
@@ -318,7 +330,16 @@ function renderSide() {
     if (ns && ns.length >= 2) {
       $('netSpark').innerHTML = sparkline(ns.map(p => p.settle_rate), { width: 110, height: 24 });
       const sv = $('netSparkVal');
-      if (sv) sv.textContent = `${(ns[ns.length - 1].settle_rate * 100).toFixed(0)}% last interval`;
+      const s24 = n.sessions_24h;
+      if (sv) sv.textContent = s24 && s24.settle_rate != null
+        ? `${(s24.settle_rate * 100).toFixed(0)}% all · ${s24.independent_settle_rate != null ? (s24.independent_settle_rate * 100).toFixed(0) + '% independent' : 'no independent demand'} · 24h`
+        : `${(ns[ns.length - 1].settle_rate * 100).toFixed(0)}% last interval`;
+      const dn = $('domNote');
+      if (dn && s24 && s24.dominant_agents && s24.dominant_agents.length) {
+        const d = s24.dominant_agents[0];
+        dn.innerHTML = `One agent wallet, <span class="mono">${esc(short(d.agent))}</span>, opened ${(d.share_of_sessions * 100).toFixed(0)}% of the last 24h's sessions. Rates marked "independent" leave it out.`;
+        dn.hidden = false;
+      }
     }
   }
 }
@@ -378,7 +399,7 @@ async function load() {
   }
 }
 
-/* /miners?m=<address> focuses one miner — the movers table links straight here. */
+/* /?m=<address> focuses one miner — the movers table links straight here. */
 function applyDeepLink() {
   const addr = new URLSearchParams(location.search).get('m');
   if (!addr || !DATA) return;
@@ -387,7 +408,7 @@ function applyDeepLink() {
   document.querySelectorAll('#showChips .chip').forEach(x => x.classList.remove('on'));
   const head = document.querySelector('.board-head');
   if (head && !head.querySelector('a')) {
-    head.insertAdjacentHTML('beforeend', '<a class="btn small ghost" href="/miners">Show every miner</a>');
+    head.insertAdjacentHTML('beforeend', '<a class="btn small ghost" href="/">Show every miner</a>');
   }
 }
 

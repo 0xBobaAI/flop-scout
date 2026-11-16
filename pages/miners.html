@@ -1,7 +1,7 @@
 <section class="hero">
   <p class="eyebrow">Miner board · live</p>
   <h1>Every FLOP miner.<br><em>Ranked by what they settle.</em></h1>
-  <p class="lede">Settlement rate, latency and capacity for every registered miner, refreshed every two minutes. The <span class="hl">24-hour trend</span> shows who is slipping now, before it costs you a request.</p>
+  <p class="lede">Settlement rebuilt session by session from the FLOP explorer, so anyone can check it. Rates are shown over all demand and over <span class="hl">independent demand</span>, without the one agent wallet that dominates the devnet. The 24-hour trend shows who is slipping now.</p>
 </section>
 
 <section class="controls" aria-label="Filters">
@@ -62,6 +62,7 @@
           <span class="mono" id="netSparkVal"></span>
         </div>
         <p class="note" id="priceNote" hidden></p>
+        <p class="note" id="domNote" hidden></p>
       </div>
       <div class="side-sec">
         <h3>Smart router</h3>
@@ -78,7 +79,7 @@
           <div class="lrow"><span class="lmark"></span><div><div class="lname">Priced, expired</div><div class="lval">Offer window closed. May return.</div></div></div>
           <div class="lrow"><span class="lmark"></span><div><div class="lname">Registered only</div><div class="lval">On-chain, not offering inference now</div></div></div>
         </div>
-        <p class="note">Prices: devnet FLOP per G<sub>n</sub>, not market USD. GPU specs are self-reported. The 24h trend appears after two snapshots.</p>
+        <p class="note">Prices: devnet FLOP per G<sub>n</sub>, not market USD. GPU specs are self-reported. Settlement counts finished sessions from <a href="/api/sessions/coverage">the explorer's record</a>; open sessions are not counted either way.</p>
       </div>
     </aside>
   </div>
