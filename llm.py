@@ -73,7 +73,7 @@ async def flop_models(c):
     try:
         # Shared cache: this runs inside /api/catalog, which renders on every
         # page load, so it must agree with the miner table and the router.
-        payload = await flop_gateway.snapshot(c)
+        payload = await flop_gateway.snapshot(c, wait=False)
         if payload is None:
             raise RuntimeError('no gateway snapshot')
         for m in payload.get('data', []):

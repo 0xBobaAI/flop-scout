@@ -41,3 +41,6 @@ PROJECT.md
 
 # Test agent output
 *.jsonl
+
+# Gateway catalog cache written at runtime
+gateway_models.json

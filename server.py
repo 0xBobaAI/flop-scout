@@ -1001,7 +1001,9 @@ async def _models_snapshot() -> dict | None:
     Returns None only when no snapshot has *ever* succeeded, which callers must
     render as unknown rather than zero.
     """
-    return await flop_gateway.snapshot(client)
+    # wait=False: the miner board renders from the last good catalog and
+    # refreshes it behind the response.
+    return await flop_gateway.snapshot(client, wait=False)
 
 
 async def _fetch_all_miners() -> list:

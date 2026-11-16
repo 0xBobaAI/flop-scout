@@ -21,3 +21,4 @@ priv.hex
 mcp-key.*
 .github/
 _whl/
+gateway_models.json

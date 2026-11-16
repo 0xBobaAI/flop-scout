@@ -27,6 +27,39 @@ MIN_RETRY = 15.0  # a failing gateway is not retried on every request
 
 _state = {'ts': 0.0, 'data': None, 'err_ts': 0.0}
 _lock = None
+_refreshing = False
+
+# The last good payload is kept on disk so a restart does not begin with
+# nothing: measured on the VPS, the first /api/miners after a deploy waited
+# 32 s on a cold gateway call. It is the public model catalog, nothing secret.
+_DISK = os.path.join(os.getenv('DATA_DIR') or os.path.dirname(os.path.abspath(__file__)), 'gateway_models.json')
+
+
+def _load_disk() -> None:
+    try:
+        import json
+        with open(_DISK, encoding='utf-8') as f:
+            payload = json.load(f)
+        if isinstance(payload, dict):
+            # The file's age is the payload's age, so TTL logic sees it as
+            # stale and refreshes it at the first opportunity.
+            _state.update(ts=os.path.getmtime(_DISK), data=payload)
+    except (OSError, ValueError):
+        pass
+
+
+def _save_disk(payload: dict) -> None:
+    try:
+        import json
+        tmp = _DISK + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(payload, f)
+        os.replace(tmp, _DISK)
+    except OSError:
+        pass
+
+
+_load_disk()
 
 
 def _get_lock() -> asyncio.Lock:
@@ -56,16 +89,35 @@ def seed(payload: dict) -> None:
     _state.update(ts=time.time(), data=payload, err_ts=0.0)
 
 
-async def snapshot(client, force: bool = False, timeout: float = TIMEOUT) -> dict | None:
+async def _refresh_behind(client) -> None:
+    global _refreshing
+    try:
+        await snapshot(client)
+    finally:
+        _refreshing = False
+
+
+async def snapshot(client, force: bool = False, timeout: float = TIMEOUT, wait: bool = True) -> dict | None:
     """Return /v1/models JSON, or None if it has never been fetched successfully.
 
     Concurrent callers share one request. A failure keeps the previous payload
     (a stale price beats a broken page) and backs off for MIN_RETRY seconds.
+
+    wait=False is for page loads: when a payload exists but is past its TTL, it
+    is returned at once and refreshed in the background, instead of holding the
+    page for a gateway that has taken 24 s to answer. With no payload at all
+    there is nothing to return, so it fetches either way.
     """
+    global _refreshing
     now = time.time()
     if not force and _state['data'] is not None and now - _state['ts'] < TTL:
         return _state['data']
     if not force and now - _state['err_ts'] < MIN_RETRY:
+        return _state['data']
+    if not wait and not force and _state['data'] is not None:
+        if not _refreshing:
+            _refreshing = True
+            asyncio.create_task(_refresh_behind(client))
         return _state['data']
 
     async with _get_lock():
@@ -84,6 +136,7 @@ async def snapshot(client, force: bool = False, timeout: float = TIMEOUT) -> dic
                 if not isinstance(payload, dict):
                     raise ValueError(f'unexpected /models payload: {type(payload).__name__}')
                 _state.update(ts=time.time(), data=payload, err_ts=0.0)
+                _save_disk(payload)
                 return _state['data']
             except Exception as e:
                 last = e
