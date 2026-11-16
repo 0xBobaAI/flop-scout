@@ -101,16 +101,20 @@ has: real, priced completions with a checkable answer, recording latency,
 correctness, cost and the serving miner. Disabled until the testnet, with the policy
 and hard caps published either way.
 
-The live score used by the router is still:
+The score used by the router:
 
 ```
-score = 0.55 × on-chain settlement rate     (explorer /miner-reliability)
-      + 0.35 × locally observed success × latency factor
+score = 0.55 × settle rate over independent demand, last 7 days
+               smoothed: (settled + p·10) / (sessions + 10), p = network independent rate
+               (the explorer's lifetime counters, smoothed the same way, only for a miner
+                with no independent sessions)
+      + 0.35 × Scout's own success × latency factor   (from probes, once the testnet opens)
       + 0.10 × currently priced in the gateway
 ```
 
-Unknown miners get a neutral 0.5 rather than a penalty. The router is advisory: the
-FLOP gateway assigns the miner.
+The smoothing stops one or two sessions from reading as 0% or 100%. Alerts use the
+last 24 h of sessions the same way and judge no miner on fewer than 5. The router is
+advisory: the FLOP gateway assigns the miner unless an owner key pins one.
 
 ---
 
