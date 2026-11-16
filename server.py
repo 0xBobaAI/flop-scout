@@ -1305,7 +1305,11 @@ def sessions_miners(window: int = 86400, min_sessions: int = 1, limit: int = 200
     stats = sessions.miner_stats(db, db_lock, window)
     rows = [{'miner': m, **v} for m, v in stats.items() if v['sessions'] >= max(1, min_sessions)]
     rows.sort(key=lambda r: (-(r['independent_sessions'] or 0), -(r['sessions'] or 0)))
+    cf = sessions.coverage(db, db_lock)['contiguous_from']
     return {'window_s': window, 'miners': rows[:max(1, min(limit, 2000))], 'total': len(rows),
+            # False while the backfill has not reached the window's start: the
+            # counts are then a lower bound, not the miner's record.
+            'window_covered': bool(cf and cf <= time.time() - window), 'covered_from': cf,
             'note': 'independent_* exclude agent wallets above 25% of the window\'s sessions; '
                     'see /api/sessions/network for which.'}
 
@@ -1313,9 +1317,11 @@ def sessions_miners(window: int = 86400, min_sessions: int = 1, limit: int = 200
 @app.get('/api/sessions/miners/{address}')
 def sessions_miner(address: str, window: int = 604800, points: int = 96):
     try:
-        return sessions.miner_history(db, db_lock, address, window, points)
+        out = sessions.miner_history(db, db_lock, address, window, points)
     except LookupError as e:
         raise HTTPException(404, {'error': 'no_sessions', 'message': str(e)})
+    cf = sessions.coverage(db, db_lock)['contiguous_from']
+    return {**out, 'window_covered': bool(cf and cf <= time.time() - out['window_s']), 'covered_from': cf}
 
 
 @app.get('/api/probes')

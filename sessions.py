@@ -189,6 +189,14 @@ async def backfill(c, db, lock, pages: int = 25) -> dict:
         got += _upsert(db, lock, data)
         off += PAGE
         _set_state(db, lock, 'backfill_offset', off)
+        # The walk is gap-free (new sessions push older ones to higher offsets,
+        # so a later page overlaps rather than skips), which makes the oldest
+        # session it has reached the start of the unbroken history.
+        if data:
+            oldest = min((x.get('openedAt') or 0) / 1000 for x in data)
+            prev = float(_state(db, lock, 'walk_oldest', 0) or 0)
+            if oldest and (not prev or oldest < prev):
+                _set_state(db, lock, 'walk_oldest', oldest)
         if not data or not j.get('pagination', {}).get('hasMore'):
             _set_state(db, lock, 'backfill_done', '1')
             return {'done': True, 'fetched': got}
@@ -199,23 +207,25 @@ async def backfill(c, db, lock, pages: int = 25) -> dict:
 def coverage(db, lock) -> dict:
     """How much of the record is held.
 
-    `contiguous_from` is where the unbroken run of history starts: the newest
-    pages are synced first and the backfill walks back from them, so everything
-    from that point to now is complete. `first_opened_at` can be much older,
-    because a session still open after weeks is fetched by the open-session
-    sync on its own; it does not mean the weeks between are covered.
+    `contiguous_from` is where the unbroken run of history starts: the oldest
+    session the backfill walk has reached, walking back from the newest. Before
+    the walk finishes, `first_opened_at` can be much older, because a session
+    still open after weeks is fetched by the pending-session sync on its own;
+    that does not mean the weeks between are covered. Windows reaching further
+    back than `contiguous_from` are partial.
     """
     with lock:
         n, first, last, miners, agents = db.execute(
             'select count(*), min(opened_at), max(opened_at), count(distinct miner), count(distinct agent) '
             'from sessions').fetchone()
         by = dict(db.execute('select status, count(*) from sessions group by status').fetchall())
-        contiguous = db.execute('select min(opened_at) from sessions where status not in (?, ?)',
-                                PENDING).fetchone()[0]
+    done = _state(db, lock, 'backfill_done') == '1'
+    walk = float(_state(db, lock, 'walk_oldest', 0) or 0) or None
+    contiguous = first if done else walk
     return {'sessions': n, 'first_opened_at': first, 'last_opened_at': last,
             'contiguous_from': contiguous,
             'miners': miners, 'agents': agents, 'by_status': by,
-            'backfill_done': _state(db, lock, 'backfill_done') == '1',
+            'backfill_done': done,
             'backfill_offset': int(_state(db, lock, 'backfill_offset', 0) or 0),
             'last_sync_at': float(_state(db, lock, 'last_sync_at', 0) or 0) or None,
             'source': f'{EXPLORER_API}/compute-channels'}
