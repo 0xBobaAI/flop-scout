@@ -71,13 +71,22 @@ echo "  GET /mcp: 405 as a stateless server should answer"
 
 QUOTE=$(curl -fsS -X POST "$BASE/api/quote" -H 'content-type: application/json' \
   -d '{"sources":["keenable"],"q":"how many miners","model":"flop:qwen/qwen2.5-0.5b-instruct"}')
+# Scout's own fee is computed locally and must always be there. The miner's
+# cost comes from the FLOP gateway's estimator, which is a third party: a slow
+# gateway (measured: 44 s on a cold call) leaves it null, and Scout reports
+# that as unknown rather than zero. That is correct behaviour, so it warns
+# instead of failing the image; a wrong shape still fails.
 echo "$QUOTE" | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
 assert d["total_flop"] > 0, d
-inf = d.get("inference") or {}
-assert inf.get("floor"), f"no inference estimate: {inf}"
-print("  quote: %s FLOP fee, miner floor %s FLOP" % (d["total_flop"], inf["floor"]["cost_flop"]))
+inf = d.get("inference")
+if inf is None:
+    print("::warning::FLOP gateway estimator did not answer; miner cost reported as unknown")
+    print("  quote: %s FLOP fee, miner cost unknown (gateway)" % d["total_flop"])
+else:
+    assert inf.get("floor") and inf["floor"].get("cost_flop") is not None, f"malformed inference: {inf}"
+    print("  quote: %s FLOP fee, miner floor %s FLOP" % (d["total_flop"], inf["floor"]["cost_flop"]))
 ' || fail "/api/quote did not price the request"
 
 # A URL that is never fetched: the validator must refuse it before any network
@@ -86,6 +95,23 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/read" \
   -H 'content-type: application/json' -d '{"url":"http://169.254.169.254/latest/meta-data/"}')
 [ "$CODE" = 422 ] || fail "/api/read accepted a link-local address (HTTP $CODE)"
 echo "  /api/read refuses link-local addresses"
+
+# The session history and probe endpoints are new in 0.8.0. A fresh container
+# has synced nothing yet, so this checks the shapes, not the counts.
+curl -fsS "$BASE/api/sessions/coverage" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+for k in ("sessions", "by_status", "contiguous_from", "backfill_done", "source"):
+    assert k in d, f"coverage lacks {k}"
+print("  /api/sessions/coverage: %s sessions so far" % d["sessions"])
+' || fail "/api/sessions/coverage is wrong"
+curl -fsS "$BASE/api/probes" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert d["policy"]["status"].startswith("disabled"), "probes must be off by default"
+assert d["policy"]["caps"]["max_per_day"] > 0
+print("  /api/probes: off by default, caps published")
+' || fail "/api/probes is wrong"
 
 # --proxy-headers is what makes client_id() see the caller behind a same-host
 # proxy; without it every caller shares one rate-limit bucket.
