@@ -217,7 +217,13 @@ async function setupKey(log) {
     for (let i = 0; i < 8; i++) {
       await new Promise(s => setTimeout(s, i ? 10000 : 12000));
       refreshBalance(true);
-      const c = await (await fetch(`${FLOP_API}/v1/enroll/wallet/challenge?address=${agent.address}`)).json();
+      // Request v2 tool-capable scope (`hermes-tools-v1`, grants qwen3-14b) first;
+      // fall back to default v1 if the gateway has no tool-capable offer right now.
+      let cResp = await fetch(`${FLOP_API}/v1/enroll/wallet/challenge?address=${encodeURIComponent(agent.address)}&purpose=hermes-tools-v1`);
+      if (!cResp.ok) {
+        cResp = await fetch(`${FLOP_API}/v1/enroll/wallet/challenge?address=${encodeURIComponent(agent.address)}`);
+      }
+      const c = await cResp.json();
       const r = await fetch(FLOP_API + '/v1/enroll/wallet', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ address: agent.address, message: c.message, signature: FlopWallet.sign(pair, c.message) }),

@@ -1005,7 +1005,7 @@ details.manual>summary:hover{color:var(--ink)}
 .kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;padding-block:4px 18px}
 .kpi{position:relative;padding:13px 15px 12px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface);box-shadow:var(--sh-1)}
 .kpi b{display:block;font:650 22px/1.1 var(--display);letter-spacing:-.03em;font-variant-numeric:tabular-nums}
-.kpi span{display:flex;align-items:center;gap:6px;margin-top:5px;font:11px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.kpi>span{display:flex;align-items:center;gap:6px;margin-top:5px;font:11px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
 .kpi small{display:block;margin-top:3px;font:11.5px var(--mono);color:var(--teal-ink)}
 
 .tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none;
@@ -1054,8 +1054,8 @@ details.manual>summary:hover{color:var(--ink)}
 .board-foot .legend{margin-left:auto;display:flex;align-items:center;gap:6px;color:var(--muted)}
 .board-foot .legend .sd{margin-left:8px}
 
-.tip{position:relative;display:inline-grid;place-items:center;width:15px;height:15px;margin-left:5px;border:1px solid var(--line-strong);
-  border-radius:50%;font:600 10px/1 var(--display);text-transform:none;letter-spacing:0;color:var(--muted);cursor:help;vertical-align:middle}
+.tip{position:relative;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;margin-left:5px;border:1px solid var(--line-strong);
+  border-radius:50%;font:600 10px/1 var(--display);text-transform:none;letter-spacing:0;text-indent:0;padding:0;color:var(--muted);cursor:help;vertical-align:middle;flex:none}
 .tip:hover,.tip:focus{color:var(--ink);border-color:var(--teal);outline:none}
 .tip-box{position:absolute;top:calc(100% + 8px);left:50%;transform:translateX(-50%);z-index:100;width:310px;padding:12px 14px;
   border:1px solid var(--line-strong);border-radius:var(--r-sm);background:var(--surface);box-shadow:var(--sh-3);
