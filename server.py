@@ -165,8 +165,17 @@ try:
     _feed_router()          # whatever is already stored, before the first sync
 except Exception as e:
     print('router feed at start failed:', repr(e))
+def _priced_miners(model_id: str) -> list:
+    """Miners currently pricing a model, from the last gateway catalog. No network call."""
+    for m in (flop_gateway.cached() or {}).get('data', []):
+        if m.get('id') == model_id:
+            return sorted({ps.get('miner_address') for ps in (m.get('x-flop') or {}).get('price_sources') or []
+                           if ps.get('miner_address')})
+    return []
+
+
 _prober = probes.Prober(client, db, db_lock, llm.FLOP_URL, llm.flop_key,
-                        lambda: llm.flop_models(client))
+                        lambda: llm.flop_models(client), _priced_miners)
 
 _hits = defaultdict(deque)       # ip -> timestamps
 _recent = {}                     # hash(ip,q,model,sources,...) -> (ts, response)

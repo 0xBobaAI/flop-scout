@@ -97,9 +97,20 @@ reached it as about the miner. Scout reports both: the raw rate, and the rate ov
 sessions from agent wallets below 25% of the window's total.
 
 **Scout's own probes** (`probes.py`, `GET /api/probes`) are the part nobody else
-has: real, priced completions with a checkable answer, recording latency,
-correctness, cost and the serving miner. Disabled until the testnet, with the policy
-and hard caps published either way.
+has: real, priced, streamed completions with a checkable answer, in four tiers:
+
+| Tier | Request | Measures |
+|---|---|---|
+| short | one-line answer, ≤ 32 tokens | start-up latency |
+| medium | a 50–100 item list, ~400 tokens | steady generation |
+| long | ~550 words in 5 sections, ~1,200 tokens | holding a long stream to the end |
+| context | ~2,700-token document, answer near its end | prompt processing and recall |
+
+Each probe records time to first token, tokens per second, the longest pause
+between chunks, stalls (pauses of 10 s or more), whether the stream ended with
+`[DONE]`, correctness, cost and the serving miner. Mix 4:3:2:1. With an owner key
+that may pin a miner (`PROBE_PIN_MINERS=1`), probes rotate across priced miners.
+Disabled until the testnet, with the policy and hard caps published either way.
 
 The score used by the router:
 

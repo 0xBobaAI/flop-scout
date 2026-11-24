@@ -76,10 +76,22 @@ systemctl enable --now flop-scout.service
 # On testnet, where renewal is expected to be possible, re-evaluate this.
 
 say 'Installing the nginx site'
-install -m 644 "$APP_DIR/deploy/nginx-flop-scout.conf" /etc/nginx/sites-available/flop-scout
+mkdir -p /var/www/certbot
+# If the Let's Encrypt certificate does not exist yet on a brand-new host,
+# install only the port-80 block first so nginx can start and serve ACME;
+# once the certificate is present, install the full 80+443 config.
+if [[ -f /etc/letsencrypt/live/flopscout.com/fullchain.pem ]]; then
+  install -m 644 "$APP_DIR/deploy/nginx-flop-scout.conf" /etc/nginx/sites-available/flop-scout
+else
+  awk '/^server \{/{n++} n<2' "$APP_DIR/deploy/nginx-flop-scout.conf" > /etc/nginx/sites-available/flop-scout
+  chmod 644 /etc/nginx/sites-available/flop-scout
+  echo "Certificate not found yet — installed HTTP-only nginx block until certbot runs."
+fi
 ln -sf /etc/nginx/sites-available/flop-scout /etc/nginx/sites-enabled/flop-scout
 rm -f /etc/nginx/sites-enabled/default
-nginx -t && systemctl reload nginx
+nginx -t
+systemctl enable nginx
+systemctl reload nginx || systemctl restart nginx
 
 cat <<EOF
 
