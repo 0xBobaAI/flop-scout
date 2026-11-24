@@ -36,7 +36,11 @@ function effectiveFlopKey() {
 }
 
 const short = a => a ? a.slice(0, 6) + '…' + a.slice(-4) : '';
-const keyValid = () => (!!agent?.key && (!agent.expires_at || agent.expires_at > Date.now() + 60000)) || !!providerKeys.flop;
+const keyValid = () => {
+  if (walletBal?.key_live === false) return false;
+  if (walletBal?.key_live === true) return true;
+  return (!!agent?.key && (!agent.expires_at || agent.expires_at > Date.now() + 60000)) || !!providerKeys.flop;
+};
 
 function currentPayMode() {
   if (payMode === 'scout' || payMode === 'wallet' || payMode === 'member') {
@@ -165,6 +169,8 @@ async function refreshBalance(silent) {
   }
   renderWalletButton();
   updateBalanceDom();
+  const dlg = $('walletDlg');
+  if (dlg?.open) walletView();
   document.dispatchEvent(new CustomEvent('wallet:balance', { detail: walletBal }));
 }
 
