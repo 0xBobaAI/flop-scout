@@ -79,6 +79,8 @@ DOCS = {
 <tr><td class="mono">POST /api/read</td><td>one public page as readable Markdown: <code>url</code>, <code>max_chars</code> (500–20000, default 8000). No search, no model. Errors carry a stable <code>error</code> code; a failed read costs nothing</td></tr>
 <tr><td class="mono">GET /api/pricing</td><td>the full catalogue, metering mode, and which services are available</td></tr>
 <tr><td class="mono">GET /api/catalog</td><td>sources, presets and models</td></tr>
+<tr><td class="mono">POST /v1/chat/completions</td><td>OpenAI-compatible chat (<code>base_url: https://flopscout.com/v1</code>), streaming or not, with tools and full message history. Bearer: your FLOP or OpenRouter key, a Scout member key (<code>sk_…</code>), or none. Optional <code>X-Scout-Miner: auto</code> or an SS58 address when the upstream key may pin</td></tr>
+<tr><td class="mono">GET /v1/models</td><td>OpenAI-shaped model list for <code>/v1</code></td></tr>
 </tbody></table></div>
 <h2>Miners</h2>
 <div class="table-wrap"><table class="ltable">

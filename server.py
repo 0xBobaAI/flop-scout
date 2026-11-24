@@ -14,6 +14,7 @@ API:  GET  /api/catalog   sources, presets, models
       GET  /api/health
 """
 import asyncio
+import sys
 import hashlib
 import json
 import os
@@ -41,6 +42,7 @@ import llm
 import mcp_server
 import members
 import netcfg
+import openai_gw
 import pricing
 import probes
 import sessions
@@ -423,8 +425,8 @@ async def run_source(key, q, n, keys):
 async def _responses(request, call_next):
     resp = await call_next(request)
     # Answers depend on live network state: never let a proxy or browser replay one.
-    if request.url.path.startswith('/api/'):
-        resp.headers['Cache-Control'] = 'no-store'
+    if request.url.path.startswith(('/api/', '/v1/')):
+        resp.headers.setdefault('Cache-Control', 'no-store')
     # Pages carry the hashed asset links, so a browser that reuses an old page
     # also reuses the old scripts. With no header a browser may heuristically
     # cache HTML; no-cache makes it revalidate on every load.
@@ -1634,6 +1636,9 @@ async def _render(path: str, status_code: int = 200):
 
 @app.exception_handler(404)
 async def _not_found(request: Request, exc):
+    if request.url.path.startswith('/v1/'):
+        return JSONResponse({'error': {'message': f'No route {request.url.path}. Use /v1/chat/completions or /v1/models.',
+                                       'type': 'invalid_request_error', 'code': 'not_found'}}, status_code=404)
     if request.url.path.startswith('/api/'):
         detail = getattr(exc, 'detail', None)
         body = {'error': 'not_found', 'path': request.url.path, 'hint': 'GET /api/catalog lists what exists'}
@@ -1688,6 +1693,8 @@ Scout's own fee and the miner's inference cost are always reported as two separa
 - GET {SITE}/api/catalog: sources, presets and models
 - GET {SITE}/api/pricing: the price list
 - GET {SITE}/api/inference-prices: every FLOP model priced as a whole request. No key needed
+- POST {SITE}/v1/chat/completions: OpenAI-compatible chat (`base_url = {SITE}/v1`), streaming, tools, multi-turn. Bearer: own key, Scout `sk_...` member key, or none. Optional `X-Scout-Miner: auto` or SS58
+- GET {SITE}/v1/models: OpenAI model list
 
 ## Miner data
 
@@ -1918,6 +1925,19 @@ def mcp_glama_claim():
     })
 
 
+# ── OpenAI-compatible gateway (/v1) ──────────────────────────────────────────
+# base_url = https://flopscout.com/v1 in any OpenAI client. See openai_gw.py.
+
+@app.get('/v1/models')
+async def v1_models():
+    return await openai_gw.models_list()
+
+
+@app.post('/v1/chat/completions')
+async def v1_chat(request: Request):
+    return await openai_gw.chat(request)
+
+
 @app.post('/mcp')
 async def mcp_endpoint(request: Request):
     body = await request.json()
@@ -1959,3 +1979,5 @@ async def mcp_unsupported(request: Request):
 
 # Bound last: the filter walks app.routes, so every route must exist first.
 app.openapi = _custom_openapi
+
+openai_gw.attach(sys.modules[__name__])

@@ -195,6 +195,8 @@ POST /api/answer
 | `POST /api/answer` | search → cited answer → receipt, with an itemised price |
 | `POST /api/quote` | the price of a request before you send it — no search, no inference |
 | `POST /api/read` | one public page as readable Markdown — no search, no model |
+| `POST /v1/chat/completions` | OpenAI-compatible chat (`base_url = https://flopscout.com/v1`): multi-turn, streaming, tools, optional `X-Scout-Miner: auto` |
+| `GET /v1/models` | OpenAI-shaped model list |
 | `GET /api/pricing` | the service catalogue, metering mode, availability |
 | `GET /api/catalog` | sources, presets, models |
 | `GET /api/router` | live miner ranking with scores |

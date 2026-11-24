@@ -112,6 +112,12 @@ assert d["policy"]["status"].startswith("disabled"), "probes must be off by defa
 assert d["policy"]["caps"]["max_per_day"] > 0
 print("  /api/probes: off by default, caps published")
 ' || fail "/api/probes is wrong"
+curl -fsS "$BASE/v1/models" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert d.get("object") == "list" and len(d.get("data") or []) >= 1, d
+print("  /v1/models: %d models" % len(d["data"]))
+' || fail "/v1/models is wrong"
 
 # --proxy-headers is what makes client_id() see the caller behind a same-host
 # proxy; without it every caller shares one rate-limit bucket.
