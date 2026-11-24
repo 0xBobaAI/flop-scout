@@ -2,9 +2,9 @@
 
 Two kinds of caller:
 
-  anonymous  no key. Every anonymous caller together shares ANON_DAILY answers
-             a day on Scout's wallet (default 500), plus the old per-IP cap so
-             one address cannot take the whole pool.
+  anonymous  no key. FREE_ANSWERS_PER_DAY answers a day each, per IP
+             (default 500). ANON_ANSWERS_PER_DAY can add a pool shared by all
+             anonymous callers; it is off by default (0).
   member     an `X-Scout-Key: sk_...` header (or `scout_key` in an MCP call).
              No per-IP or per-day count, only a per-minute pace that stops a
              runaway loop from burning the budget in seconds.
@@ -24,9 +24,9 @@ import sqlite3
 import sys
 import time
 
-ANON_DAILY = int(os.getenv('ANON_ANSWERS_PER_DAY', '500'))
+ANON_DAILY = int(os.getenv('ANON_ANSWERS_PER_DAY', '0'))      # 0 = no shared pool
 MEMBER_PER_MIN = int(os.getenv('MEMBER_ANSWERS_PER_MIN', '30'))
-WALLET_DAILY_FLOP = float(os.getenv('WALLET_DAILY_FLOP', '1000'))
+WALLET_DAILY_FLOP = float(os.getenv('WALLET_DAILY_FLOP', '10000'))
 PREFIX = 'sk_'
 
 SCHEMA = '''

@@ -50,7 +50,7 @@ from registry import PRESETS, SOURCES
 
 BASE = Path(__file__).parent
 DATA = Path(os.getenv('DATA_DIR', BASE))
-FREE_PER_DAY = int(os.getenv('FREE_ANSWERS_PER_DAY', '20'))       # answers/day/IP on Scout's wallet
+FREE_PER_DAY = int(os.getenv('FREE_ANSWERS_PER_DAY', '500'))      # answers/day/IP on Scout's wallet
 USER_PER_MIN = int(os.getenv('USER_ANSWERS_PER_MIN', '6'))         # answers/min/IP with own key
 DUP_WINDOW_S = int(os.getenv('DUPLICATE_WINDOW_S', '600'))         # same question again within 10 min -> cached
 SITE = 'https://flopscout.com'
@@ -333,9 +333,9 @@ def answer_quota(request: Request, cid: str, own_key: bool, member: dict | None,
     """Who pays and how much is left, for /api/answer.
 
     Members: no daily cap, a per-minute pace only. Own-key callers: as before.
-    Anonymous callers: the per-IP cap plus one pool shared by every anonymous
-    caller (members.ANON_DAILY a day), because the pool is what spends Scout's
-    wallet. The wallet guard applies to whoever Scout would pay for.
+    Anonymous callers: FREE_PER_DAY each, per IP. An optional pool shared by
+    all anonymous callers (members.ANON_DAILY, off when 0) can cap them together.
+    The wallet guard applies to whoever Scout would pay for.
     """
     if member:
         key = f'member:{member["id"]}'
@@ -351,6 +351,8 @@ def answer_quota(request: Request, cid: str, own_key: bool, member: dict | None,
         return {'limit': members.MEMBER_PER_MIN, 'remaining': max(0, members.MEMBER_PER_MIN - len(dq)),
                 'window': '60s', 'tier': 'member', 'slot': now if consume else None, 'key': key}
     if not own_key:
+        if members.ANON_DAILY <= 0:
+            return rate_limit(cid, False) if consume else peek_quota(cid, False)
         used = members.anon_answers_24h(db, db_lock)
         if consume and used >= members.ANON_DAILY:
             raise HTTPException(429, f'The free pool of {members.ANON_DAILY} answers a day is used up. '
