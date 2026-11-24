@@ -53,10 +53,42 @@ def attach(srv) -> None:
     server = srv
 
 
-def _err(status: int, code: str, message: str, headers: dict | None = None) -> JSONResponse:
+def _err(status: int, code: str, message: str, headers: dict | None = None,
+         extra: dict | None = None) -> JSONResponse:
     """An OpenAI-shaped error, so client libraries surface it instead of crashing on the shape."""
-    return JSONResponse({'error': {'message': message, 'type': 'invalid_request_error' if status < 500 else 'server_error',
-                                   'code': code}}, status_code=status, headers=headers)
+    payload = {'error': {'message': message, 'type': 'invalid_request_error' if status < 500 else 'server_error',
+                         'code': code}}
+    if extra:
+        payload.update(extra)
+    return JSONResponse(payload, status_code=status, headers=headers)
+
+
+def _normalise_upstream_error(data, status: int, scout_meta: dict) -> dict:
+    """Ensure `error` is an object with `message` and `code`.
+
+    The FLOP gateway returns `{"error": "invalid_api_key", "message": "..."}` on
+    some 4xx replies; the OpenAI SDK reads `body["error"]["message"]` and throws
+    TypeError when `error` is a string.
+    """
+    if not isinstance(data, dict):
+        return {'error': {'message': str(data)[:300], 'type': 'server_error', 'code': f'http_{status}'},
+                'x_scout': scout_meta}
+    err = data.get('error')
+    if isinstance(err, dict) and 'message' in err:
+        err.setdefault('type', 'invalid_request_error' if status < 500 else 'server_error')
+        out = dict(data)
+    elif isinstance(err, str):
+        msg = data.get('message') or err
+        out = {k: v for k, v in data.items() if k not in ('error', 'message')}
+        out['error'] = {'message': str(msg), 'type': 'invalid_request_error' if status < 500 else 'server_error',
+                        'code': err}
+    else:
+        out = dict(data)
+        out['error'] = {'message': str(data.get('message') or data)[:300],
+                        'type': 'invalid_request_error' if status < 500 else 'server_error',
+                        'code': f'http_{status}'}
+    out['x_scout'] = scout_meta
+    return out
 
 
 def resolve_model(name: str) -> tuple[str, str] | None:
@@ -204,10 +236,9 @@ async def chat(request: Request):
             data = {'error': {'message': r.text[:300], 'code': f'http_{r.status_code}'}}
         if r.status_code >= 400:
             account(False, None, None, f'{provider} {r.status_code}')
-            if isinstance(data, dict):
-                data['x_scout'] = scout_meta
             keep = {k: v for k, v in r.headers.items() if k.lower() == 'retry-after'}
-            return JSONResponse(data, status_code=r.status_code, headers=keep)
+            return JSONResponse(_normalise_upstream_error(data, r.status_code, scout_meta),
+                                status_code=r.status_code, headers=keep)
         receipt = data.get('x_flop_receipt') or {}
         scout_meta['miner'] = receipt.get('miner')
         account(True, data.get('usage'), receipt)
@@ -229,11 +260,10 @@ async def chat(request: Request):
         try:
             data = json.loads(raw_err)
         except ValueError:
-            data = {'error': {'message': raw_err.decode(errors='replace')[:300], 'code': f'http_{r.status_code}'}}
-        if isinstance(data, dict):
-            data['x_scout'] = scout_meta
+            data = {'message': raw_err.decode(errors='replace')[:300]}
         keep = {k: v for k, v in r.headers.items() if k.lower() == 'retry-after'}
-        return JSONResponse(data, status_code=r.status_code, headers=keep)
+        return JSONResponse(_normalise_upstream_error(data, r.status_code, scout_meta),
+                            status_code=r.status_code, headers=keep)
 
     async def relay():
         usage, receipt, done = None, None, False
