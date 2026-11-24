@@ -39,6 +39,7 @@ import flop_gateway
 import flop_estimate
 import llm
 import mcp_server
+import members
 import netcfg
 import pricing
 import probes
@@ -128,7 +129,8 @@ db_lock = threading.Lock()
 with db_lock:
     db.execute('''create table if not exists answers(ts real, q text, sources text, engine text, model text, ok int,
                   miner text, prompt_tokens int, completion_tokens int, cost text, latency real, attempts int, error text)''')
-    for col in ('paid_by text', 'client text', 'scout_flop real', 'metering text', 'scout_quote_flop real'):
+    for col in ('paid_by text', 'client text', 'scout_flop real', 'metering text', 'scout_quote_flop real',
+                'member text'):
         try:
             db.execute(f'alter table answers add column {col}')
         except sqlite3.OperationalError:
@@ -151,6 +153,7 @@ with db_lock:
 
 sessions.init(db, db_lock)
 probes.init(db, db_lock)
+members.init(db, db_lock)
 def _feed_router() -> None:
     """Give the router each miner's independent-demand settlement over 7 days."""
     router.INDEPENDENT = sessions.independent_counts(db, db_lock, 7 * 86400)
@@ -181,7 +184,8 @@ _hits = defaultdict(deque)       # ip -> timestamps
 _recent = {}                     # hash(ip,q,model,sources,...) -> (ts, response)
 
 _ROW_COLS = ('ts', 'q', 'sources', 'engine', 'model', 'ok', 'miner', 'prompt_tokens', 'completion_tokens',
-             'cost', 'latency', 'attempts', 'error', 'paid_by', 'client', 'scout_flop', 'metering', 'scout_quote_flop')
+             'cost', 'latency', 'attempts', 'error', 'paid_by', 'client', 'scout_flop', 'metering', 'scout_quote_flop',
+             'member')
 
 
 class AnswerReq(BaseModel):
@@ -325,6 +329,42 @@ def rate_limit(cid: str, own_key: bool, noun: str = 'answers',
             'tier': 'free', 'slot': now}
 
 
+def answer_quota(request: Request, cid: str, own_key: bool, member: dict | None, consume: bool = True) -> dict:
+    """Who pays and how much is left, for /api/answer.
+
+    Members: no daily cap, a per-minute pace only. Own-key callers: as before.
+    Anonymous callers: the per-IP cap plus one pool shared by every anonymous
+    caller (members.ANON_DAILY a day), because the pool is what spends Scout's
+    wallet. The wallet guard applies to whoever Scout would pay for.
+    """
+    if member:
+        key = f'member:{member["id"]}'
+        now = time.time()
+        dq = _hits[key]
+        while dq and now - dq[0] > 60:
+            dq.popleft()
+        if consume and len(dq) >= members.MEMBER_PER_MIN:
+            raise HTTPException(429, f'Member pace: {members.MEMBER_PER_MIN} answers per minute.',
+                                headers={'Retry-After': '20'})
+        if consume:
+            dq.append(now)
+        return {'limit': members.MEMBER_PER_MIN, 'remaining': max(0, members.MEMBER_PER_MIN - len(dq)),
+                'window': '60s', 'tier': 'member', 'slot': now if consume else None, 'key': key}
+    if not own_key:
+        used = members.anon_answers_24h(db, db_lock)
+        if consume and used >= members.ANON_DAILY:
+            raise HTTPException(429, f'The free pool of {members.ANON_DAILY} answers a day is used up. '
+                                     'It refills as the 24-hour window rolls.', headers={'Retry-After': '3600'})
+        q = rate_limit(cid, False) if consume else peek_quota(cid, False)
+        q['pool_remaining'] = max(0, members.ANON_DAILY - used - (1 if consume else 0))
+        return q
+    return rate_limit(cid, True) if consume else peek_quota(cid, True)
+
+
+def wallet_exhausted() -> bool:
+    return members.scout_spend_24h(db, db_lock) >= members.WALLET_DAILY_FLOP
+
+
 def peek_quota(cid: str, own_key: bool) -> dict:
     """Same shape as rate_limit() without consuming anything."""
     now = time.time()
@@ -334,6 +374,10 @@ def peek_quota(cid: str, own_key: bool) -> dict:
         return {'limit': USER_PER_MIN, 'remaining': max(0, USER_PER_MIN - used), 'window': '60s', 'tier': 'own-key'}
     used = sum(1 for t in dq if now - t < 86400)
     return {'limit': FREE_PER_DAY, 'remaining': max(0, FREE_PER_DAY - used), 'window': '24h', 'tier': 'free'}
+
+
+def refund_quota(cid: str, quota: dict) -> None:
+    refund(quota.get('key') or cid, quota.get('slot'))
 
 
 def refund(cid: str, slot: float) -> None:
@@ -352,13 +396,13 @@ def _quota_headers(response, quota: dict) -> None:
     response.headers['X-RateLimit-Tier'] = quota['tier']
 
 
-def log(q, srcs, res, cid):
+def log(q, srcs, res, cid, member=None):
     u, rc = res.get('usage') or {}, res.get('receipt') or {}
     row = (time.time(), q, ','.join(srcs), res.get('engine'), res.get('model'), int(bool(res.get('answer'))),
            rc.get('miner'), u.get('prompt_tokens'), u.get('completion_tokens'),
            json.dumps(u.get('cost_flop') or u.get('cost')), res.get('latency_s'), res.get('attempts'),
            (res.get('error') or '')[:300], res.get('paid_by'), cid, res.get('scout_charge_flop'),
-           res.get('metering'), res.get('scout_quote_flop'))
+           res.get('metering'), res.get('scout_quote_flop'), (member or {}).get('id'))
     with db_lock:
         db.execute(f'insert into answers ({",".join(_ROW_COLS)}) values ({",".join("?" * len(_ROW_COLS))})', row)
         db.commit()
@@ -515,6 +559,7 @@ async def answer(req: AnswerReq, request: Request, response: Response):
     keys = {k: v.strip() for k, v in req.keys.items() if v and v.strip()}
     cid = client_id(request)
     own = bool(keys.get('flop') or keys.get('openrouter'))
+    member = members.lookup(db, db_lock, request.headers.get('x-scout-key') or keys.pop('scout', None))
     srcs = auto_sources(req.q) if 'auto' in req.sources else ([s for s in req.sources if s in SOURCES][:6] or ['keenable'])
 
     # The cache key has to cover everything that changes the work: two questions
@@ -527,7 +572,15 @@ async def answer(req: AnswerReq, request: Request, response: Response):
         return {**hit, 'cached': True, 'pricing': pricing.quote([], cache_hit=True), 'answers': [
             {**a, 'scout_charge_flop': None, 'scout_quote_flop': 0.0, 'cached': True}
             for a in hit.get('answers', [])]}
-    quota = rate_limit(cid, own)
+    quota = answer_quota(request, cid, own, member)
+    # The guard covers Scout's wallet only: a caller paying with their own key
+    # is never stopped by it.
+    scout_pays = not own and any(m.startswith('flop:') for m in [req.model] + ([req.compare_model] if req.compare_model else []))
+    if scout_pays and wallet_exhausted():
+        refund_quota(cid, quota)
+        raise HTTPException(503, f'Scout has paid its daily budget of {members.WALLET_DAILY_FLOP:g} FLOP for inference. '
+                                 'Search and page reading still work; answers resume as the 24-hour window rolls.',
+                            headers={'Retry-After': '3600'})
 
     compare = bool(req.compare_model and req.compare_model != req.model)
     quote = pricing.quote(srcs, compare=compare)
@@ -573,7 +626,9 @@ async def answer(req: AnswerReq, request: Request, response: Response):
             res['metering'] = quote['metering']
             # llm.complete() already feeds the router on success; recording here
             # as well silently doubled every local call counter.
-            log(req.q, srcs, res, cid)
+            log(req.q, srcs, res, cid, member)
+            if res.get('answer'):
+                members.record(db, db_lock, member, (res.get('usage') or {}).get('cost_flop'))
         out['answers'] = answers
 
     answered = any(a.get('answer') for a in out['answers'])
@@ -586,10 +641,12 @@ async def answer(req: AnswerReq, request: Request, response: Response):
             for k in sorted(_recent, key=lambda k: _recent[k][0])[:1000]:
                 _recent.pop(k, None)
     else:
-        refund(cid, quota['slot'])
-        quota = peek_quota(cid, own)
+        refund_quota(cid, quota)
+        quota = answer_quota(request, cid, own, member, consume=False)
     _quota_headers(response, quota)
-    out['quota'] = {k: v for k, v in quota.items() if k != 'slot'}
+    out['quota'] = {k: v for k, v in quota.items() if k not in ('slot', 'key')}
+    if member:
+        out['member'] = member['label']
     return out
 
 
@@ -1873,7 +1930,12 @@ async def mcp_endpoint(request: Request):
                              'error': {'code': -32600,
                                        'message': 'Batch requests are not supported; send one message per POST'}},
                             status_code=400)
-    status, reply = await mcp_server.handle(app, body, peer)
+    # Members put their key on the MCP connection: X-Scout-Key, or a bearer token.
+    sk = request.headers.get('x-scout-key') or ''
+    auth = request.headers.get('authorization') or ''
+    if not sk and auth.lower().startswith('bearer sk_'):
+        sk = auth.split(None, 1)[1]
+    status, reply = await mcp_server.handle(app, body, peer, sk or None)
     if reply is None:
         return Response(status_code=202)
     return JSONResponse(reply, status_code=status,

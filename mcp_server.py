@@ -211,7 +211,7 @@ def _tool_result(text, is_error=False):
     return {'content': [{'type': 'text', 'text': text}], 'isError': is_error}
 
 
-async def _call_tool(app, name, args, caller_ip):
+async def _call_tool(app, name, args, caller_ip, scout_key=None):
     method, path, mode = _ROUTES[name]
     args = dict(args or {})
     if '{address}' in path:
@@ -220,6 +220,9 @@ async def _call_tool(app, name, args, caller_ip):
             return _tool_result('address is required', True)
         path = path.replace('{address}', addr)
     kw = {'headers': {'x-forwarded-for': caller_ip or '127.0.0.1'}}
+    # A member key set on the MCP connection applies to every tool call made over it.
+    if scout_key:
+        kw['headers']['x-scout-key'] = scout_key
     if mode == 'json':
         kw['json'] = args
     elif mode in ('query', 'path+query'):
@@ -237,7 +240,7 @@ async def _call_tool(app, name, args, caller_ip):
     return _tool_result(body[:200_000], is_error=r.status_code >= 400)
 
 
-async def handle(app, msg, caller_ip):
+async def handle(app, msg, caller_ip, scout_key=None):
     """Handle one JSON-RPC message. Returns (http_status, body_or_None)."""
     if not isinstance(msg, dict) or msg.get('jsonrpc') != '2.0':
         return 400, _rpc_error(None, -32600, 'Invalid Request')
@@ -261,6 +264,6 @@ async def handle(app, msg, caller_ip):
         name = params.get('name')
         if name not in _ROUTES:
             return 200, _rpc_error(rid, -32602, f'Unknown tool: {name}')
-        res = await _call_tool(app, name, params.get('arguments'), caller_ip)
+        res = await _call_tool(app, name, params.get('arguments'), caller_ip, scout_key)
         return 200, {'jsonrpc': '2.0', 'id': rid, 'result': res}
     return 200, _rpc_error(rid, -32601, f'Method not found: {method}')

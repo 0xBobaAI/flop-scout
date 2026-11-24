@@ -251,7 +251,7 @@ function renderAgentPanel() {
 
   if (!agent) {
     $('agentTitle').textContent = 'No wallet connected';
-    $('agentSub').textContent = "Free tier: 20 answers a day on Scout's wallet. Connect your wallet to pay from your own FLOP.";
+    $('agentSub').textContent = "Free answers on Scout's wallet, shared by everyone. Connect your wallet to pay from your own FLOP.";
     $('paidBy').textContent = 'Compute paid by: Scout (free tier)';
     return;
   }
