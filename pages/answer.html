@@ -76,17 +76,18 @@
       <div class="side-head">
         <p class="eyebrow">Your agent</p>
         <h2 id="agentTitle">No wallet connected</h2>
-        <p id="agentSub">Free answers on Scout's wallet, shared by everyone. Connect your wallet to pay from your own FLOP.</p>
+        <p id="agentSub">500 free answers a day per IP on Scout's wallet. Open the wallet panel to switch payer or view your FLOP API key.</p>
       </div>
 
       <div class="side-sec" id="agentStats" hidden>
-        <div class="stats">
+        <div class="stats two">
+          <div class="stat"><b id="stBalance">—</b><span>FLOP balance</span></div>
+          <div class="stat"><b id="stQuota">—</b><span>allowance left</span></div>
           <div class="stat"><b id="stSessions">0</b><span>settled</span></div>
           <div class="stat"><b id="stSpend">0</b><span>FLOP spent</span></div>
-          <div class="stat"><b id="stQuota">—</b><span>quota left</span></div>
         </div>
         <p class="note" id="stNote"></p>
-        <div class="row"><button class="btn small" id="refreshAgent" type="button">Refresh</button><button class="btn small ghost" id="openWallet" type="button">Manage</button></div>
+        <div class="row"><button class="btn small" id="refreshAgent" type="button">Refresh</button><button class="btn small ghost" id="openWallet" type="button">Wallet &amp; key</button></div>
       </div>
 
       <div class="side-sec">

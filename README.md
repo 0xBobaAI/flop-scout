@@ -139,15 +139,14 @@ advisory: the FLOP gateway assigns the miner unless an owner key pins one.
 - Price preview before you send: `POST /api/quote` returns the itemised total for the exact source set
 - Itemised FLOP price per answer, and the miner's own cost shown separately
 - A failure is never cached and never costs a free-tier slot
-- sr25519 wallet in the browser — fund from the faucet, enroll a gateway key, pay for compute from your own address
+- sr25519 wallet in the browser — live on-chain FLOP balance via RPC, faucet funding, gateway key enrollment (masked with one-click copy for external SDKs), and choice of payer (Scout free tier, member key `sk_…`, or your own FLOP key)
 - Provider keys for OpenRouter, Exa, Tavily, Brave, Firecrawl, Serper, Jina and GitHub, stored in the browser and sent per request; a source without its key is disabled with the reason showing, not offered as a checkbox that can only fail
 - Compare mode: two models over the same sources
 
 **Miners**
-- All registered miners with GPU inventory, stake, calibration, settlement rate, router score
-- 24h trend per miner and a Rising / Falling board from Scout's own snapshots
-- Leaderboard of miners that actually served requests through Scout
-- Network health: block height, TPS, capacity, countries, priced vs registered
+- Single sortable table for all registered miners: region, score, raw & independent 24h settlement, Δ 24h, sessions, price, GPU, stake
+- 24h Improving / Slipping movers rebuilt session by session from the explorer
+- Regions breakdown, live model capacity, and leaderboard of miners that served Scout requests
 
 **Interface**
 - Light and dark, system-aware, persisted, no flash on first paint
@@ -200,9 +199,11 @@ POST /api/answer
 | `GET /api/pricing` | the service catalogue, metering mode, availability |
 | `GET /api/catalog` | sources, presets, models |
 | `GET /api/router` | live miner ranking with scores |
-| `GET /api/miners` | every miner with GPU, stake, router score, 24h delta |
+| `GET /api/miners` | every miner with GPU, stake, region, router score, 24h session settlement |
 | `GET /api/miners/{address}` | one miner, same shape as a row |
-| `GET /api/reliability` | settlement-rate deltas per miner over a window |
+| `GET /api/sessions/miners` | per-miner settlement from individual explorer sessions (raw + independent) |
+| `GET /api/wallet/{address}/balance` | live on-chain FLOP balance (free, reserved, frozen) from Substrate RPC |
+| `GET /api/probes` | 4-tier streamed miner probe policy, caps and results |
 | `GET /api/stats` | per-model success rate, payer split, quoted vs charged |
 | `GET /api/health` | liveness, metering mode, source count, key present |
 

@@ -9,3 +9,5 @@ import os
 
 EXPLORER = os.getenv('FLOP_EXPLORER_URL', 'https://explorer.devnet.flop.network').rstrip('/')
 EXPLORER_API = f'{EXPLORER}/api'
+RPC_URL = os.getenv('FLOP_RPC_URL', 'https://rpc.devnet.flop.network').rstrip('/')
+FAUCET_URL = os.getenv('FLOP_FAUCET_URL', 'https://faucet.flop.network').rstrip('/')

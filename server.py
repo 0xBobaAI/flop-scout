@@ -35,6 +35,7 @@ from fastapi.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
+import chain_balance
 import layout
 import flop_gateway
 import flop_estimate
@@ -527,7 +528,8 @@ async def quote_preview(req: QuoteReq, request: Request, response: Response):
     compare = bool(req.compare_model)
     q = pricing.quote(srcs, compare=compare, cache_hit=req.cache_hit)
     own = bool((req.keys.get('flop') or '').strip() or (req.keys.get('openrouter') or '').strip())
-    quota = peek_quota(client_id(request), own)
+    member = members.lookup(db, db_lock, request.headers.get('x-scout-key') or req.keys.get('scout'))
+    quota = answer_quota(request, client_id(request), own, member, consume=False)
     _quota_headers(response, quota)
 
     inference = None
@@ -547,7 +549,7 @@ async def quote_preview(req: QuoteReq, request: Request, response: Response):
                          'floor_assumes': 'no sources in the prompt (lower bound)',
                          'typical_assumes': '3 sources of ordinary snippet length'}
 
-    return {**q, 'sources': srcs, 'quota': quota,
+    return {**q, 'sources': srcs, 'quota': {k: v for k, v in quota.items() if k not in ('slot', 'key')},
             'inference': inference,
             'inference_note': (None if inference is None else
                                'Miner cost, estimated by the FLOP gateway for this prompt. '
@@ -1485,6 +1487,22 @@ def probes_state(window: int = 86400, limit: int = 50):
             'summary': probes.summary(db, db_lock, window), 'recent': probes.recent(db, db_lock, limit)}
 
 
+@app.get('/api/wallet/{address}/balance')
+async def wallet_balance(address: str):
+    """Live on-chain FLOP balance for an SS58 address, read from the node RPC.
+
+    The explorer's `/api/accounts/{address}` reports `"liveBalance": false` and
+    `"balance": "0"` on funded wallets, so Scout queries `System::Account` on
+    the Substrate RPC directly. Cached briefly (~2 blocks) per address.
+    """
+    try:
+        return await chain_balance.get_balance(client, address)
+    except ValueError as e:
+        raise HTTPException(422, {'error': 'bad_address', 'message': str(e)})
+    except Exception as e:
+        raise HTTPException(502, {'error': 'rpc_unavailable', 'message': f'{type(e).__name__}: {str(e)[:120]}'})
+
+
 @app.get('/api/miners/{address}')
 async def miner_detail(address: str):
     """One miner, same shape as a row on /api/miners. Agents should not have to
@@ -1704,7 +1722,8 @@ Scout's own fee and the miner's inference cost are always reported as two separa
 - GET {SITE}/api/sessions/miners/{{address}}: one miner's sessions over a window, bucketed
 - GET {SITE}/api/sessions/network: network settlement, raw and independent, and the dominant agent wallets
 - GET {SITE}/api/sessions/coverage: how much of the explorer's record Scout holds
-- GET {SITE}/api/probes: Scout's own probe purchases, policy and caps. Disabled until the testnet opens
+- GET {SITE}/api/wallet/{{address}}/balance: live on-chain FLOP balance (free, reserved, frozen) from the node RPC
+- GET {SITE}/api/probes: Scout's own probe purchases, policy and caps. Disabled until the testnet's inference lane opens
 - POST {SITE}/api/alerts: subscribe to a settle-rate drop. Fields: `address` (SS58 or `*`), `threshold` (0–1), `channel` (`site` | `telegram`), `handle`
 - GET {SITE}/api/alerts/check: read triggered alerts back. `channel: "site"` delivers nothing on its own, you poll this
 - DELETE {SITE}/api/alerts/{{id}}: unsubscribe
@@ -1726,8 +1745,9 @@ Registry metadata: {SITE}/.well-known/mcp/server.json
 
 ## Limits
 
-- Free tier is rate-limited per caller; limits are returned in X-RateLimit-* headers
-- FLOP answers need a FLOP gateway key; pass your own in `keys.flop`, or `keys.openrouter` for OpenRouter models
+- Anonymous callers get {FREE_PER_DAY} free answers a day per IP on Scout's wallet; limits are echoed in X-RateLimit-* headers
+- Scout member keys (`X-Scout-Key: sk_...`, or `Authorization: Bearer sk_...` on `/v1` and `/mcp`) have no daily cap (30/min pace)
+- Scout's wallet is guarded by a {members.WALLET_DAILY_FLOP:g} FLOP/day budget; callers passing their own `keys.flop` or `keys.openrouter` have no daily cap
 - Source code: https://github.com/0xBobaAI/flop-scout (MIT)
 '''
 

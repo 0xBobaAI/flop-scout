@@ -247,38 +247,77 @@ async function ask(e) {
 /* ── sidebar agent panel ────────────────────────────────────────────────── */
 function renderAgentPanel() {
   const stats = $('agentStats');
-  if (stats) stats.hidden = !agent;
+  const hasAny = !!agent || !!effectiveFlopKey();
+  if (stats) stats.hidden = !hasAny;
 
-  if (!agent) {
+  const balEl = $('stBalance');
+  if (balEl) balEl.textContent = walletBal?.free_flop != null ? fmtBal(walletBal.free_flop) : (agent ? '…' : '—');
+
+  const mode = currentPayMode();
+  const modeLabel = mode === 'member'
+    ? 'Scout member key (unlimited daily)'
+    : mode === 'wallet' && effectiveFlopKey()
+      ? (agent ? `your wallet ${short(agent.address)}` : 'your FLOP key')
+      : 'Scout (500/day free tier)';
+  $('paidBy').textContent = `Compute paid by: ${modeLabel}`;
+
+  if (!agent && !providerKeys.scout && !providerKeys.flop) {
     $('agentTitle').textContent = 'No wallet connected';
-    $('agentSub').textContent = "Free answers on Scout's wallet, shared by everyone. Connect your wallet to pay from your own FLOP.";
-    $('paidBy').textContent = 'Compute paid by: Scout (free tier)';
+    $('agentSub').textContent = "500 free answers a day per IP on Scout's wallet. Open the wallet panel to connect, choose payer or copy your FLOP key.";
     return;
   }
-  $('agentTitle').textContent = short(agent.address);
-  $('agentSub').textContent = keyValid()
-    ? `Gateway key active until ${new Date(agent.expires_at).toLocaleString('en-GB')}. Your wallet pays for every FLOP answer.`
-    : 'Wallet ready, gateway key missing or expired — open the wallet to enroll.';
-  $('paidBy').textContent = keyValid()
-    ? `Compute paid by: your wallet ${short(agent.address)}`
-    : 'Compute paid by: Scout (enroll a key to use your wallet)';
+  if (!agent && providerKeys.scout) {
+    $('agentTitle').textContent = 'Member key active';
+    $('agentSub').textContent = "Unlimited daily answers on Scout's wallet (30/min pace).";
+    return;
+  }
+  if (!agent && providerKeys.flop) {
+    $('agentTitle').textContent = 'External FLOP key';
+    $('agentSub').textContent = mode === 'wallet'
+      ? 'Using your pasted FLOP key for inference.'
+      : "Pasted FLOP key saved, currently using Scout's free tier.";
+    return;
+  }
+
+  const balInline = walletBal?.free_flop != null ? ` · ${fmtBal(walletBal.free_flop)} FLOP` : '';
+  $('agentTitle').textContent = short(agent.address) + balInline;
+  if (mode === 'scout') {
+    $('agentSub').textContent = "Wallet connected · paying via Scout's free tier (switch in Wallet & key).";
+  } else if (mode === 'member') {
+    $('agentSub').textContent = "Wallet connected · paying via Scout member key (sk_…).";
+  } else if (keyValid()) {
+    $('agentSub').textContent = agent.expires_at
+      ? `Gateway key active until ${new Date(agent.expires_at).toLocaleString('en-GB')}. Paying from your FLOP key.`
+      : 'FLOP gateway key active.';
+  } else {
+    $('agentSub').textContent = 'Wallet ready, gateway key missing or expired — open Wallet & key to enroll or switch to Scout free tier.';
+  }
 }
 
 async function refreshAgentStats() {
-  if (!keyValid()) { renderAgentPanel(); return; }
+  if (agent?.address) refreshBalance(true);
+  const fk = effectiveFlopKey();
+  if (!fk) { renderAgentPanel(); return; }
   try {
-    const h = { Authorization: 'Bearer ' + agent.key };
-    const [me, rc] = await Promise.all([
-      fetch(FLOP_API + '/v1/keys/me', { headers: h }).then(r => r.json()),
-      fetch(FLOP_API + '/v1/keys/me/receipts', { headers: h }).then(r => r.json()),
+    const h = { Authorization: 'Bearer ' + fk };
+    const [meR, rcR] = await Promise.all([
+      fetch(FLOP_API + '/v1/keys/me', { headers: h }),
+      fetch(FLOP_API + '/v1/keys/me/receipts', { headers: h }),
     ]);
+    if (!meR.ok) {
+      $('stQuota').textContent = 'expired';
+      $('stNote').textContent = 'Gateway key expired or rejected — open Wallet & key to re-enroll or view it.';
+      renderAgentPanel();
+      return;
+    }
+    const [me, rc] = await Promise.all([meR.json(), rcR.ok ? rcR.json() : { receipts: [] }]);
     const list = rc.receipts || [];
     const settled = list.filter(x => x.state === 'settled');
     const spend = settled.reduce((a, x) => a + (x.settled_spend || x.reserved_spend || 0), 0);
     $('stSessions').textContent = settled.length;
     $('stSpend').textContent = spend.toFixed(2);
     $('stQuota').textContent = me.remaining_quota != null ? Math.round(me.remaining_quota).toLocaleString('en') : '—';
-    $('stNote').textContent = `${list.length} requests on this key · ${list.filter(x => x.state === 'released').length} released without charge (busy miners). Data: FLOP gateway ledger.`;
+    $('stNote').textContent = `${list.length} requests on this key · ${list.filter(x => x.state === 'released').length} released without charge.`;
   } catch {
     $('stNote').textContent = 'Could not reach the FLOP gateway ledger.';
   }
@@ -302,14 +341,15 @@ document.addEventListener('keydown', e => {
 });
 
 // agent.js emits these after the shared wallet changes state
-document.addEventListener('agent:change', () => { renderAgentPanel(); if (keyValid()) refreshAgentStats(); });
+document.addEventListener('agent:change', () => { renderAgentPanel(); if (effectiveFlopKey()) refreshAgentStats(); });
+document.addEventListener('wallet:balance', () => renderAgentPanel());
 document.addEventListener('agent:enrolled', () => refreshAgentStats());
-document.addEventListener('agent:answered', () => { if (keyValid()) refreshAgentStats(); });
-document.addEventListener('keys:change', () => { markKeyState(); });
+document.addEventListener('agent:answered', () => { if (effectiveFlopKey() || agent) refreshAgentStats(); });
+document.addEventListener('keys:change', () => { renderAgentPanel(); markKeyState(); });
 $('model').addEventListener('change', markKeyState);
 const mw = $('modelWarn');
 if (mw) mw.querySelector('button').onclick = openKeyPanel;
 
 renderAgentPanel();
-if (keyValid()) refreshAgentStats();
+if (effectiveFlopKey()) refreshAgentStats();
 init();

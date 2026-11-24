@@ -10,7 +10,9 @@ Keeping the nav in one place means adding a section is a one-line change and the
 
 SITE = 'https://flopscout.com'
 
-from netcfg import EXPLORER as _EXPLORER
+from netcfg import EXPLORER as _EXPLORER, FAUCET_URL as _FAUCET
+from flop_gateway import FLOP_URL as _FLOP_URL
+_FLOP_ORIGIN = _FLOP_URL[:-3] if _FLOP_URL.endswith('/v1') else _FLOP_URL
 
 # One number, derived once. Hardcoded "27 sources" was wrong within one release
 # in three separate files; every page now renders this instead.
@@ -72,7 +74,7 @@ def head(title: str, description: str, path: str = '/') -> str:
 <meta property="og:image" content="{SITE}/static/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="Flop Scout — search and page reading that agents pay for in FLOP">
+<meta property="og:image:alt" content="Flop Scout — FLOP miner analytics, search and OpenAI-compatible gateway for AI agents">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="{SITE}/static/og.png">
 <link rel="preload" href="{asset('app.css')}" as="style">
@@ -219,7 +221,7 @@ def page(*, title: str, description: str, path: str, body: str, scripts: list[st
 {footer()}
 {wallet_dialog()}
 {theme_script()}
-<script>window.FLOP_EXPLORER = {_EXPLORER!r};</script>
+<script>window.FLOP_EXPLORER = {_EXPLORER!r}; window.FLOP_API = {_FLOP_ORIGIN!r}; window.FLOP_FAUCET = {_FAUCET!r};</script>
 <script src="{asset('wallet.js')}" defer></script>
 <script src="{asset('agent.js')}" defer></script>
 {tags}
