@@ -9,6 +9,15 @@ It will succeed once the daily cap resets.
 
 Usage:  python renew_key.py
 Env:    WALLET_MNEMONIC (12-word phrase) — required to sign the challenge.
+        FLOP_ENROLL_PURPOSES — comma-separated enrollment purposes to try in
+        order (default `hermes-tools-v1,` — the trailing empty entry is the
+        legacy default allowance). The gateway scopes each key to one model;
+        that model is stored as `key_model` so the server sends it.
+
+Exit codes: 0 = key valid or a transient gateway condition (daily cap,
+enrollment temporarily unavailable) that the next hourly run will retry;
+2 = this wallet's allowance is permanently expired/exhausted — a human must
+act (new wallet or new purpose); 1 = anything else.
 """
 import asyncio
 import json
@@ -22,8 +31,21 @@ from substrateinterface import Keypair
 
 BASE = Path(__file__).parent
 WALLET = BASE / '.wallet.json'
-FAUCET = 'https://faucet.flop.network'
-GATEWAY = 'https://api.flop.network/v1'
+FAUCET = os.getenv('FLOP_FAUCET_URL', 'https://faucet.devnet.flop.network').rstrip('/')
+GATEWAY = os.getenv('FLOP_BASE_URL', 'https://api.flop.network/v1').rstrip('/')
+PURPOSES = [p.strip() for p in os.getenv('FLOP_ENROLL_PURPOSES', 'hermes-tools-v1,').split(',')]
+
+# Gateway conditions that clear on their own; the hourly timer retries them.
+TRANSIENT = {'wallet_enrollment_cap_reached', 'wallet_enrollment_unavailable', 'indexer_unavailable'}
+# Conditions retrying cannot fix for this wallet + purpose.
+PERMANENT = {'devnet_enrollment_expired', 'devnet_allowance_exhausted', 'invalid_enrollment_purpose'}
+
+
+def _err(r) -> str:
+    try:
+        return str(r.json().get('error') or r.status_code)
+    except Exception:
+        return str(r.status_code)
 
 
 def load_wallet() -> dict:
@@ -85,31 +107,45 @@ async def main():
         else:
             print('faucet: skipped (wallet already funded)')
 
-        # 2) Challenge
-        r = await c.get(f'{GATEWAY}/enroll/wallet/challenge', params={'address': addr})
-        if not r.is_success:
-            print(f'challenge failed: {r.status_code} {r.text[:150]}')
-            sys.exit(1)
-        msg = r.json()['message']
+        # 2-4) Challenge → sign → enroll, per purpose, until one issues a key
+        outcomes = []
+        for purpose in PURPOSES:
+            label = purpose or 'default'
+            params = {'address': addr, **({'purpose': purpose} if purpose else {})}
+            r = await c.get(f'{GATEWAY}/enroll/wallet/challenge', params=params)
+            if not r.is_success:
+                print(f'[{label}] challenge failed: {r.status_code} {r.text[:150]}')
+                outcomes.append(_err(r))
+                continue
+            msg = r.json()['message']
+            sig = '0x' + pair.sign(msg).hex()
+            r = await c.post(f'{GATEWAY}/enroll/wallet',
+                             json={'address': addr, 'message': msg, 'signature': sig})
+            if not r.is_success:
+                print(f'[{label}] enroll failed: {r.status_code} {r.text[:200]}')
+                outcomes.append(_err(r))
+                continue
 
-        # 3) Sign
-        sig = '0x' + pair.sign(msg).hex()
+            j = r.json()
+            w['gateway_key'] = j['key']
+            w['key_expires_at'] = j.get('expires_at', 0)
+            w['key_model'] = j.get('model') or ''
+            w['key_purpose'] = purpose
+            save_wallet(w)
+            exp = time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(w['key_expires_at'] / 1000))
+            print(f'OK [{label}] · model {w["key_model"] or "?"} · key {j["key"][:10]}… expires {exp}')
+            return
 
-        # 4) Enroll
-        r = await c.post(f'{GATEWAY}/enroll/wallet',
-                         json={'address': addr, 'message': msg, 'signature': sig})
-        if not r.is_success:
-            print(f'enroll failed: {r.status_code} {r.text[:200]}')
-            print('Retrying in an hour. The daily wallet enrollment cap resets every 24h.')
-            sys.exit(1)
-
-        j = r.json()
-        w['gateway_key'] = j['key']
-        w['key_expires_at'] = j.get('expires_at', 0)
-        save_wallet(w)
-        exp = time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(w['key_expires_at'] / 1000))
-        print(f'OK · key {j["key"][:24]}… expires {exp}')
-
+    if any(o in TRANSIENT or o.startswith('5') for o in outcomes):
+        # A normal devnet condition, not a failure of this unit: the next hourly
+        # run retries. Exiting 1 here filled the journal with red every hour.
+        print('Gateway enrollment temporarily unavailable or capped; next hourly run retries.')
+        return
+    if outcomes and all(o in PERMANENT for o in outcomes):
+        print(f'Wallet {addr} cannot enroll for any of {PURPOSES}: {outcomes}. '
+              'A new wallet or enrollment purpose is needed.')
+        sys.exit(2)
+    sys.exit(1)
 
 if __name__ == '__main__':
     asyncio.run(main())

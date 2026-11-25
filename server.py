@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
@@ -1487,8 +1487,58 @@ def probes_state(window: int = 86400, limit: int = 50):
             'summary': probes.summary(db, db_lock, window), 'recent': probes.recent(db, db_lock, limit)}
 
 
+_tclaim_hits: dict[str, float] = {}
+# The faucet allows 3 grants per IP per day; all relayed claims share Scout's IP.
+TESTNET_RELAY_PER_DAY = int(os.getenv('TESTNET_RELAY_PER_DAY', '2'))
+
+
+@app.post('/api/faucet/testnet/claim')
+async def testnet_faucet_claim(request: Request):
+    """Relay a Testnet faucet claim that was signed in the browser.
+
+    The faucet takes JSON only and has no CORS preflight, so browsers cannot
+    post to it directly. The claim is signed locally with the recipient key
+    (`flop-faucet-agent/v1|<genesis>|<address>|<nonce>`); Scout only forwards
+    it and never sees the key. One relay per client IP per 24h, since every
+    relayed claim counts against Scout's own IP limit at the faucet.
+    """
+    try:
+        body = await request.json()
+        address = str(body['address']).strip()
+        nonce = str(body['nonce']).strip()
+        signature = str(body['signature']).strip()
+    except Exception:
+        raise HTTPException(400, {'error': 'bad_request', 'message': 'expected JSON {address, nonce, signature}'})
+    try:
+        chain_balance.ss58_pubkey(address)
+    except ValueError as e:
+        raise HTTPException(422, {'error': 'bad_address', 'message': str(e)})
+    if not (nonce.isdigit() and len(nonce) <= 19) or not (signature.startswith('0x') and len(signature) == 130):
+        raise HTTPException(422, {'error': 'bad_claim', 'message': 'nonce must be decimal (<=19 digits), signature 0x + 64 bytes hex'})
+    ip = request.client.host if request.client else '?'
+    now = time.time()
+    for k in [k for k, t in _tclaim_hits.items() if now - t > 86400]:
+        _tclaim_hits.pop(k, None)
+    if ip in _tclaim_hits:
+        raise HTTPException(429, {'error': 'relay_limited', 'message': 'One relayed claim per day per visitor; use the curl command instead.'})
+    if len(_tclaim_hits) >= TESTNET_RELAY_PER_DAY:
+        raise HTTPException(429, {'error': 'relay_busy', 'message': 'Scout relay is used up for today; run the curl command from your own machine.'})
+    try:
+        r = await client.post(f'{netcfg.TESTNET_FAUCET_URL}/v1/testnet/agent-claims',
+                              json={'address': address, 'nonce': nonce, 'signature': signature}, timeout=45)
+    except Exception as e:
+        raise HTTPException(502, {'error': 'faucet_unavailable', 'message': f'{type(e).__name__}'})
+    try:
+        j = r.json()
+    except Exception:
+        j = {'success': False, 'error': r.text[:200]}
+    if r.status_code < 300 and j.get('success'):
+        _tclaim_hits[ip] = now
+    return JSONResponse(j, status_code=r.status_code)
+
+
 @app.get('/api/wallet/{address}/balance')
-async def wallet_balance(address: str):
+async def wallet_balance(address: str, network: str | None = Query(None, pattern='^(devnet|testnet)$')):
     """Live on-chain FLOP balance for an SS58 address, read from the node RPC.
 
     The explorer's `/api/accounts/{address}` reports `"liveBalance": false` and
@@ -1496,7 +1546,7 @@ async def wallet_balance(address: str):
     the Substrate RPC directly. Cached briefly (~2 blocks) per address.
     """
     try:
-        return await chain_balance.get_balance(client, address)
+        return await chain_balance.get_balance(client, address, network)
     except ValueError as e:
         raise HTTPException(422, {'error': 'bad_address', 'message': str(e)})
     except Exception as e:

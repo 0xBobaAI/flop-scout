@@ -4,7 +4,9 @@
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const FLOP_API = window.FLOP_API || 'https://api.flop.network';
-const FAUCET = window.FLOP_FAUCET || 'https://faucet.flop.network';
+const FAUCET = window.FLOP_FAUCET || 'https://faucet.devnet.flop.network';
+const T_FAUCET = window.FLOP_TESTNET_FAUCET || 'https://faucet.flop.network';
+const T_GENESIS = window.FLOP_TESTNET_GENESIS || '0x918abd58fb16306b30ef3886514cfaebffecb4de43e82b6f8ec4795c43cfd800';
 const LS = 'flopScoutAgent.v1';
 const LS_PAY = 'flopScoutPayMode.v1'; // 'scout' | 'wallet' | 'member'
 
@@ -155,9 +157,12 @@ async function refreshBalance(silent) {
           .then(r => r.ok ? r.json() : null).catch(() => null)
       );
     }
-    const [bal, me] = await Promise.all(reqs);
+    const tReq = fetch(`/api/wallet/${encodeURIComponent(agent.address)}/balance?network=testnet`)
+      .then(r => r.ok ? r.json() : null).catch(() => null);
+    const [[bal, me], tbal] = await Promise.all([Promise.all(reqs), tReq]);
     walletBal = {
       ...bal,
+      testnet_flop: tbal ? tbal.free_flop : null,
       loading: false,
       error: null,
       quota: me && me.remaining_quota != null ? me.remaining_quota : null,
@@ -192,9 +197,57 @@ function updateBalanceDom() {
   if (walletBal.reserved_flop > 0) parts.push(`${fmtBal(walletBal.reserved_flop)} reserved`);
   if (walletBal.frozen_flop > 0) parts.push(`${fmtBal(walletBal.frozen_flop)} frozen`);
   if (walletBal.quota != null) parts.push(`gateway allowance: ${fmtBal(walletBal.quota)} FLOP`);
+  const tEl = $('wBalTest');
+  if (tEl) tEl.textContent = walletBal.testnet_flop != null ? `${fmtBal(walletBal.testnet_flop)} FLOP` : '—';
   else if (walletBal.key_live === false) parts.push('gateway key expired or rejected');
   const sub = $('wBalSub');
-  if (sub) sub.textContent = parts.length ? parts.join(' · ') : 'On-chain free balance (live via node RPC)';
+  if (sub) sub.textContent = parts.length ? parts.join(' · ') : 'Devnet · gateway and miners run here';
+}
+
+/* ── Testnet faucet: claim signed locally, relayed by Scout (faucet has no CORS preflight) ── */
+function testnetClaim() {
+  const pair = FlopWallet.pair(agent.mnemonic);
+  const nonce = String(Date.now());
+  const msg = `flop-faucet-agent/v1|${T_GENESIS}|${agent.address}|${nonce}`;
+  return { address: agent.address, nonce, signature: FlopWallet.sign(pair, msg) };
+}
+
+function claimCurl(c) {
+  return `curl -sS ${T_FAUCET}/v1/testnet/agent-claims -H 'content-type: application/json' -d '${JSON.stringify(c)}'`;
+}
+
+async function claimTestnet() {
+  const btn = $('wClaimT'), out = $('wClaimOut');
+  if (btn) btn.disabled = true;
+  const say = (html) => { if (out) { out.hidden = false; out.innerHTML = html; } };
+  try {
+    await FlopWallet.ready();
+    const chain = await fetch(T_FAUCET + '/chain').then(r => r.json()).catch(() => null);
+    if (chain && (chain.network !== 'testnet' || chain.genesisHash !== T_GENESIS)) {
+      say('Faucet is not serving the expected Testnet genesis — stopped.');
+      return;
+    }
+    const c = testnetClaim();
+    say('Claiming 10 Testnet FLOP…');
+    const r = await fetch('/api/faucet/testnet/claim', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(c),
+    });
+    const j = await r.json().catch(() => ({}));
+    const d = j.detail || j;
+    if (r.ok && j.success) {
+      say(`Received ${esc(String(j.amount))} Testnet FLOP · tx <code>${esc(String(j.txHash || '').slice(0, 14))}…</code>`);
+      setTimeout(() => refreshBalance(true), 7000);
+      return;
+    }
+    const why = esc(d.message || d.error || ('HTTP ' + r.status));
+    say(`${why}<br><span class="c-muted">Run it from your own machine (signed here, only funds this address):</span>
+      <div class="codewrap" style="margin-top:6px"><button class="btn small copybtn" type="button" data-copy="">Copy</button><pre class="code" style="font-size:10.5px;padding:9px 11px;white-space:pre-wrap;word-break:break-all">${esc(claimCurl(c))}</pre></div>`);
+    wireCopyButtons();
+  } catch (e) {
+    say('Error: ' + esc(e.message || String(e)));
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 /* ── gateway key enrollment ─────────────────────────────────────────────── */
@@ -361,7 +414,9 @@ function walletView(justCreated) {
       <div>
         <span class="mlabel">Wallet balance</span>
         <strong class="w-bal-num" id="wBalFree">${walletBal?.free_flop != null ? fmtBal(walletBal.free_flop) + ' FLOP' : 'loading…'}</strong>
-        <small id="wBalSub" class="c-muted">On-chain free balance (live via node RPC)</small>
+        <small id="wBalSub" class="c-muted">Devnet · gateway and miners run here</small>
+        <div class="w-tbal"><span class="mlabel">Testnet</span> <b id="wBalTest">${walletBal?.testnet_flop != null ? fmtBal(walletBal.testnet_flop) + ' FLOP' : '—'}</b>
+          <button class="btn small ghost" id="wClaimT" type="button" title="10 Testnet FLOP per wallet per 24h">Claim 10</button></div>
       </div>
       <div class="row" style="margin:0">
         <button class="btn small ghost" id="wRefreshBal" type="button" title="Refresh balance">↻ Refresh</button>
@@ -383,7 +438,8 @@ function walletView(justCreated) {
       <button class="btn primary" id="wSetup" type="button">${agent.key ? 'Re-enroll gateway key' : 'Fund &amp; enroll key'}</button>
       <button class="btn ghost" id="wForget" type="button">Forget wallet</button>
     </div>
-    <p class="note" id="wLog">Requests test FLOP from the faucet and signs a gateway enrollment challenge locally.</p>
+    <div class="note" id="wClaimOut" hidden></div>
+    <p class="note" id="wLog">Devnet faucet + gateway key, signed locally. Testnet has no gateway yet.</p>
     ${payModeSection()}
     ${flopKeyBox()}
     ${providerKeyFields()}`;
@@ -392,6 +448,7 @@ function walletView(justCreated) {
   if (!walletBal || (!walletBal.loading && walletBal.free_flop == null)) refreshBalance(true);
 
   $('wSetup').onclick = () => setupKey();
+  $('wClaimT').onclick = () => claimTestnet();
   $('wRefreshBal').onclick = () => refreshBalance(false);
   $('wCopy').onclick = () => navigator.clipboard.writeText(agent.address).then(() => toast('Address copied'));
   $('wForget').onclick = () => {

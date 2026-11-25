@@ -10,7 +10,7 @@ Keeping the nav in one place means adding a section is a one-line change and the
 
 SITE = 'https://flopscout.com'
 
-from netcfg import EXPLORER as _EXPLORER, FAUCET_URL as _FAUCET
+from netcfg import EXPLORER as _EXPLORER, FAUCET_URL as _FAUCET, TESTNET_FAUCET_URL as _TFAUCET, TESTNET_GENESIS as _TGEN
 from flop_gateway import FLOP_URL as _FLOP_URL
 _FLOP_ORIGIN = _FLOP_URL[:-3] if _FLOP_URL.endswith('/v1') else _FLOP_URL
 
@@ -221,7 +221,7 @@ def page(*, title: str, description: str, path: str, body: str, scripts: list[st
 {footer()}
 {wallet_dialog()}
 {theme_script()}
-<script>window.FLOP_EXPLORER = {_EXPLORER!r}; window.FLOP_API = {_FLOP_ORIGIN!r}; window.FLOP_FAUCET = {_FAUCET!r};</script>
+<script>window.FLOP_EXPLORER = {_EXPLORER!r}; window.FLOP_API = {_FLOP_ORIGIN!r}; window.FLOP_FAUCET = {_FAUCET!r}; window.FLOP_TESTNET_FAUCET = {_TFAUCET!r}; window.FLOP_TESTNET_GENESIS = {_TGEN!r};</script>
 <script src="{asset('wallet.js')}" defer></script>
 <script src="{asset('agent.js')}" defer></script>
 {tags}

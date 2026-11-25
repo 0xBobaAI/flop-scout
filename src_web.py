@@ -338,7 +338,7 @@ async def flop_live(c, q, n, keys):
     mods, health, faucet = await asyncio.gather(
         _cached(c, 'gw_models', 'https://api.flop.network/v1/models', timeout=10),
         _cached(c, 'ex_health', f'{EXPLORER}/health', timeout=6),
-        _cached(c, 'faucet', 'https://faucet.flop.network/limits', ttl=600, timeout=6),
+        _cached(c, 'faucet', 'https://faucet.devnet.flop.network/limits', ttl=600, timeout=6),
     )
     if mods:
         for x in mods.get('data', []):
@@ -368,7 +368,7 @@ async def flop_live(c, q, n, keys):
         dc = fc.get('dailyCap', {})
         out.append({
             'title': 'FLOP devnet: faucet & sponsorship limits',
-            'url': 'https://faucet.flop.network/limits',
+            'url': 'https://faucet.devnet.flop.network/limits',
             'snippet': (f"Faucet {fc.get('status')} · daily cap {dc.get('limitFlop')} FLOP, "
                         f"used {dc.get('usedFlop')}, remaining {dc.get('remainingFlop')} · "
                         f"miner sponsorship: {sp.get('miner', {}).get('status')} · "

@@ -124,23 +124,29 @@ def _decode_account(hexval: str | None) -> dict:
     }
 
 
-async def get_balance(client: httpx.AsyncClient, address: str) -> dict:
+async def get_balance(client: httpx.AsyncClient, address: str, network: str | None = None) -> dict:
     pub = ss58_pubkey(address)
     addr = address.strip()
+    rpc = netcfg.RPC_URLS.get(network) if network else netcfg.RPC_URL
+    if not rpc:
+        raise ValueError(f'unknown network {network!r}')
     now = time.time()
-    hit = _cache.get(addr)
-    if hit and now - hit[0] < TTL and hit[1].get('source') == netcfg.RPC_URL:
+    ck = f'{rpc}|{addr}'
+    hit = _cache.get(ck)
+    if hit and now - hit[0] < TTL:
         return {**hit[1], 'cached': True}
 
-    r = await client.post(netcfg.RPC_URL, json={
+    r = await client.post(rpc, json={
         'jsonrpc': '2.0', 'id': 1, 'method': 'state_getStorage', 'params': [_storage_key(pub)],
     }, timeout=12)
     r.raise_for_status()
     j = r.json()
     if 'error' in j:
         raise RuntimeError(j['error'].get('message', 'RPC error'))
-    out = {'address': addr, **_decode_account(j.get('result')), 'source': netcfg.RPC_URL, 'cached': False}
-    _cache[addr] = (now, out)
+    out = {'address': addr, **_decode_account(j.get('result')), 'source': rpc, 'cached': False}
+    if network:
+        out['network'] = network
+    _cache[ck] = (now, out)
     if len(_cache) > 2000:
         for k in sorted(_cache, key=lambda k: _cache[k][0])[:500]:
             _cache.pop(k, None)
