@@ -216,6 +216,15 @@ function claimCurl(c) {
   return `curl -sS ${T_FAUCET}/v1/testnet/agent-claims -H 'content-type: application/json' -d '${JSON.stringify(c)}'`;
 }
 
+function claimPwsh(c) {
+  return `Invoke-RestMethod -Method Post -Uri ${T_FAUCET}/v1/testnet/agent-claims -ContentType 'application/json' -Body '${JSON.stringify(c)}'`;
+}
+
+function cmdBlock(label, cmd) {
+  return `<div class="mlabel" style="margin-top:8px">${label}</div>
+    <div class="codewrap" style="margin-top:4px"><button class="btn small copybtn" type="button" data-copy="">Copy</button><pre class="code" style="font-size:10.5px;padding:9px 11px;white-space:pre-wrap;word-break:break-all">${esc(cmd)}</pre></div>`;
+}
+
 async function claimTestnet() {
   const btn = $('wClaimT'), out = $('wClaimOut');
   if (btn) btn.disabled = true;
@@ -227,21 +236,17 @@ async function claimTestnet() {
       say('Faucet is not serving the expected Testnet genesis — stopped.');
       return;
     }
+    const lim = await fetch(T_FAUCET + '/limits').then(r => r.json()).catch(() => null);
+    const st = lim?.faucet?.status;
     const c = testnetClaim();
-    say('Claiming 10 Testnet FLOP…');
-    const r = await fetch('/api/faucet/testnet/claim', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(c),
-    });
-    const j = await r.json().catch(() => ({}));
-    const d = j.detail || j;
-    if (r.ok && j.success) {
-      say(`Received ${esc(String(j.amount))} Testnet FLOP · tx <code>${esc(String(j.txHash || '').slice(0, 14))}…</code>`);
-      setTimeout(() => refreshBalance(true), 7000);
-      return;
-    }
-    const why = esc(d.message || d.error || ('HTTP ' + r.status));
-    say(`${why}<br><span class="c-muted">Run it from your own machine (signed here, only funds this address):</span>
-      <div class="codewrap" style="margin-top:6px"><button class="btn small copybtn" type="button" data-copy="">Copy</button><pre class="code" style="font-size:10.5px;padding:9px 11px;white-space:pre-wrap;word-break:break-all">${esc(claimCurl(c))}</pre></div>`);
+    // The faucet counts grants per IP, so the claim must leave from the visitor's
+    // own connection. Browsers cannot post to it (no CORS preflight), hence a
+    // ready-signed command. It carries no secret and can only fund this address.
+    say(`${st && st !== 'open' ? `<b>Faucet status: ${esc(st)}</b> — grants resume when it is refilled.<br>` : ''}
+      Signed in this browser. Run one command on your computer — the claim goes from your IP, 10 Testnet FLOP per wallet per 24h:
+      ${cmdBlock('Windows PowerShell', claimPwsh(c))}
+      ${cmdBlock('macOS / Linux', claimCurl(c))}
+      <span class="c-muted">Valid for this nonce only · no seed or key inside · then press ↻ Refresh.</span>`);
     wireCopyButtons();
   } catch (e) {
     say('Error: ' + esc(e.message || String(e)));
@@ -416,7 +421,7 @@ function walletView(justCreated) {
         <strong class="w-bal-num" id="wBalFree">${walletBal?.free_flop != null ? fmtBal(walletBal.free_flop) + ' FLOP' : 'loading…'}</strong>
         <small id="wBalSub" class="c-muted">Devnet · gateway and miners run here</small>
         <div class="w-tbal"><span class="mlabel">Testnet</span> <b id="wBalTest">${walletBal?.testnet_flop != null ? fmtBal(walletBal.testnet_flop) + ' FLOP' : '—'}</b>
-          <button class="btn small ghost" id="wClaimT" type="button" title="10 Testnet FLOP per wallet per 24h">Claim 10</button></div>
+          <button class="btn small ghost" id="wClaimT" type="button" title="10 Testnet FLOP per wallet per 24h, claimed from your own IP">Claim 10</button></div>
       </div>
       <div class="row" style="margin:0">
         <button class="btn small ghost" id="wRefreshBal" type="button" title="Refresh balance">↻ Refresh</button>

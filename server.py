@@ -1488,8 +1488,10 @@ def probes_state(window: int = 86400, limit: int = 50):
 
 
 _tclaim_hits: dict[str, float] = {}
-# The faucet allows 3 grants per IP per day; all relayed claims share Scout's IP.
-TESTNET_RELAY_PER_DAY = int(os.getenv('TESTNET_RELAY_PER_DAY', '2'))
+# The faucet allows 3 grants per IP per day and every relayed claim uses Scout's
+# IP, which Scout keeps for its own wallet. Off by default: visitors claim from
+# their own IP with the command the wallet signs for them.
+TESTNET_RELAY_PER_DAY = int(os.getenv('TESTNET_RELAY_PER_DAY', '0'))
 
 
 @app.post('/api/faucet/testnet/claim')

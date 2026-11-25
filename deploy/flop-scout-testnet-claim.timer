@@ -1,0 +1,10 @@
+[Unit]
+Description=Claim Testnet FLOP for Scout every 6h (faucet: 10 FLOP / wallet / 24h)
+
+[Timer]
+OnCalendar=*-*-* 00/6:17:00
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

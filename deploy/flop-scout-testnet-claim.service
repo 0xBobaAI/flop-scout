@@ -1,0 +1,10 @@
+[Unit]
+Description=Flop Scout — claim Testnet FLOP for Scout's own wallet
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/flop-scout
+ExecStart=/opt/flop-scout/.venv/bin/python testnet_claim.py
+StandardOutput=journal
+StandardError=journal
