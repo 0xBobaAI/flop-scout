@@ -95,7 +95,7 @@ def _explain_auth(out: dict, status: int, provider: str, paid_by: str) -> tuple[
     """Say whose key the FLOP gateway rejected; it answers 401 invalid_api_key
     for expired keys too, and wallet keys live at most 24 hours."""
     err = out.get('error') or {}
-    if provider != 'flop' or status != 401 or err.get('code') != 'invalid_api_key':
+    if provider != 'flop' or status != 401 or err.get('code') not in ('invalid_api_key', 'api_key_expired'):
         return out, status
     if paid_by == 'scout':
         err['code'] = 'scout_key_unavailable'
