@@ -91,6 +91,23 @@ def _normalise_upstream_error(data, status: int, scout_meta: dict) -> dict:
     return out
 
 
+def _explain_auth(out: dict, status: int, provider: str, paid_by: str) -> tuple[dict, int]:
+    """Say whose key the FLOP gateway rejected; it answers 401 invalid_api_key
+    for expired keys too, and wallet keys live at most 24 hours."""
+    err = out.get('error') or {}
+    if provider != 'flop' or status != 401 or err.get('code') != 'invalid_api_key':
+        return out, status
+    if paid_by == 'scout':
+        err['code'] = 'scout_key_unavailable'
+        err['type'] = 'server_error'
+        err['message'] = ("Scout's own FLOP devnet key has expired, so the free tier cannot run right now. "
+                          'Use your own FLOP key (flopscout.com > wallet > Fund & enroll key) as the API key.')
+        return out, 503
+    err['message'] = ('The FLOP gateway rejected this key: it is wrong or expired (wallet keys last at most 24h). '
+                      'Re-enroll at flopscout.com > wallet, or check it with GET https://api.flop.network/v1/keys/me.')
+    return out, status
+
+
 def resolve_model(name: str) -> tuple[str, str] | None:
     """(provider, upstream model id) for a requested model name, or None."""
     name = (name or '').strip()
@@ -194,6 +211,13 @@ async def chat(request: Request):
         else:
             pin, why = want, 'requested by the caller'
 
+    if paid_by == 'scout' and provider == 'flop':
+        # Scout's enrolled key is scoped to one model; the legacy default name
+        # is mapped onto it rather than returned as 401 model_not_allowed.
+        scoped = llm.flop_key_model()
+        if scoped and upstream_model == llm.DEFAULT_FLOP_MODEL:
+            upstream_model = scoped
+
     up = dict(body)
     up['model'] = upstream_model
     stream = bool(up.get('stream'))
@@ -237,8 +261,9 @@ async def chat(request: Request):
         if r.status_code >= 400:
             account(False, None, None, f'{provider} {r.status_code}')
             keep = {k: v for k, v in r.headers.items() if k.lower() == 'retry-after'}
-            return JSONResponse(_normalise_upstream_error(data, r.status_code, scout_meta),
-                                status_code=r.status_code, headers=keep)
+            out, code = _explain_auth(_normalise_upstream_error(data, r.status_code, scout_meta),
+                                      r.status_code, provider, paid_by)
+            return JSONResponse(out, status_code=code, headers=keep)
         receipt = data.get('x_flop_receipt') or {}
         scout_meta['miner'] = receipt.get('miner')
         account(True, data.get('usage'), receipt)
@@ -262,8 +287,9 @@ async def chat(request: Request):
         except ValueError:
             data = {'message': raw_err.decode(errors='replace')[:300]}
         keep = {k: v for k, v in r.headers.items() if k.lower() == 'retry-after'}
-        return JSONResponse(_normalise_upstream_error(data, r.status_code, scout_meta),
-                            status_code=r.status_code, headers=keep)
+        out, code = _explain_auth(_normalise_upstream_error(data, r.status_code, scout_meta),
+                                  r.status_code, provider, paid_by)
+        return JSONResponse(out, status_code=code, headers=keep)
 
     async def relay():
         usage, receipt, done = None, None, False

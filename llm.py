@@ -16,7 +16,7 @@ OPENROUTER_URL = 'https://openrouter.ai/api/v1'
 # The devnet gateway key expires every 24h and is refreshed by renew_key.py,
 # which rewrites .wallet.json. Caching the resolved key at import would pin the
 # server to a dead key until a restart, so re-resolve it (cheaply) per request.
-_key_cache = {'mtime': None, 'value': '', 'expires': 0}
+_key_cache = {'mtime': None, 'value': '', 'expires': 0, 'model': ''}
 
 
 def flop_key() -> str:
@@ -35,20 +35,42 @@ def flop_key() -> str:
             data = json.loads(_wallet.read_text()) if mtime else {}
             _key_cache.update(mtime=mtime,
                               value=data.get('gateway_key', ''),
-                              expires=int(data.get('key_expires_at') or 0))
+                              expires=int(data.get('key_expires_at') or 0),
+                              model=data.get('key_model') or '')
         except Exception:
-            _key_cache.update(mtime=None, value='', expires=0)
+            _key_cache.update(mtime=None, value='', expires=0, model='')
     if _key_cache['value'] and _key_cache['expires'] > time.time() * 1000:
         return _key_cache['value']
     return os.getenv('FLOP_API_KEY', '').strip() or _key_cache['value']
+
+def flop_key_model() -> str:
+    """Model the server's own gateway key is scoped to ('' if unknown).
+
+    Wallet enrollment issues a key for exactly one model (`model` in the
+    enrollment response, written to .wallet.json by renew_key.py). Sending any
+    other model with that key is a guaranteed 401 model_not_allowed.
+    """
+    flop_key()  # refresh the cache from .wallet.json
+    if _key_cache['value'] and _key_cache['expires'] > time.time() * 1000:
+        return _key_cache['model']
+    return ''
+
+
+def default_flop_model() -> str:
+    return flop_key_model() or DEFAULT_FLOP_MODEL
+
 
 # The devnet key is scoped to this model. If the live catalogue is unreachable
 # at page load, the picker must still offer something the caller can run —
 # otherwise it fills with OpenRouter models that need a key nobody has entered.
 DEFAULT_FLOP_MODEL = 'qwen/qwen2.5-0.5b-instruct'
-FALLBACK_MODELS = [{'id': f'flop:{DEFAULT_FLOP_MODEL}', 'provider': 'flop', 'model': DEFAULT_FLOP_MODEL,
-                    'label': 'Qwen2.5 0.5B Instruct (devnet)', 'price': 'live price unavailable',
-                    'capacity_tpm': None, 'miners': 0, 'blocked': False}]
+
+
+def fallback_models():
+    m = default_flop_model()
+    return [{'id': f'flop:{m}', 'provider': 'flop', 'model': m,
+             'label': f'{m.split("/")[-1]} (devnet)', 'price': 'live price unavailable',
+             'capacity_tpm': None, 'miners': 0, 'blocked': False}]
 
 # Curated OpenRouter models shown in the picker (user brings own key).
 OPENROUTER_MODELS = [
@@ -113,7 +135,7 @@ def _with_providers(flop):
     # Always keep a runnable FLOP option first; a slow gateway is not a reason to
     # hand the caller a picker full of models they cannot use.
     if not any(m['provider'] == 'flop' for m in flop):
-        flop = [dict(m) for m in FALLBACK_MODELS]
+        flop = fallback_models()
     return flop + other
 
 
@@ -132,7 +154,14 @@ async def complete(c, model_id, messages, max_tokens, keys, tries=4, budget=200)
     """Returns dict(answer, engine, model, receipt, usage, latency_s, error, attempts)."""
     provider, model = model_id.split(':', 1)
     if provider == 'flop':
-        url, key = FLOP_URL, keys.get('flop') or flop_key()
+        own = (keys.get('flop') or '').strip()
+        url, key = FLOP_URL, own or flop_key()
+        # Scout's own key works for one model only. Requests that name the old
+        # hard-coded default (every client built before scoped keys) are sent
+        # with the model the key actually allows instead of failing with 401.
+        scoped = '' if own else flop_key_model()
+        if scoped and model == DEFAULT_FLOP_MODEL:
+            model = scoped
     elif provider == 'openrouter':
         url, key = OPENROUTER_URL, keys.get('openrouter')
     else:
@@ -172,7 +201,8 @@ async def complete(c, model_id, messages, max_tokens, keys, tries=4, budget=200)
         # Hard failures — retrying will not help
         if 'model_not_allowed' in body:
             BLOCKED.add(model_id)
-            err = 'this FLOP devnet key is not allowed to use this model (new keys get qwen2.5-0.5b only)'
+            err = (f'this FLOP devnet key is not allowed to use this model'
+                   f' (Scout key is scoped to {flop_key_model() or "another model"})')
             break
         if r.status_code in (400, 401, 403, 404):
             break
