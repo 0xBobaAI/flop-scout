@@ -1,6 +1,6 @@
 /* Flop Scout: miners page. Depends on agent.js for $, esc, short, toast. */
 
-const EXPLORER = window.FLOP_EXPLORER || 'https://explorer.devnet.flop.network';
+const EXPLORER = window.FLOP_EXPLORER || 'https://testnet.flopscan.io';
 document.documentElement.classList.add('js-tips');
 const fmtTpm = t => t == null ? '—' : t >= 1e6 ? (t / 1e6).toFixed(1) + 'M' : t >= 1e3 ? (t / 1e3).toFixed(0) + 'k' : String(t);
 const fmtNum = v => v == null ? '—' : v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(1) + 'k' : String(Math.round(v));

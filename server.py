@@ -556,7 +556,7 @@ async def quote_preview(req: QuoteReq, request: Request, response: Response):
                                'Separate from Scout\'s fee above, and spent from the caller wallet to the miner.'),
             'limits': {'sources': 6, 'n': {'min': 1, 'max': 8}, 'max_tokens': {'min': 32, 'max': 800},
                        'q_chars': {'min': 2, 'max': 500}},
-            'note': ('Charges are nominal on devnet: computed, displayed and logged, never debited.'
+            'note': (f'Charges are nominal on {netcfg.LABEL}: computed, displayed and logged, never debited.'
                      if pricing.METERING == 'nominal' else 'Charges settle on-chain.')}
 
 
@@ -915,7 +915,7 @@ _MINERS_TTL = 90  # seconds
 # The explorer registry (~490 miners, five pages) took 11 s on a cold start.
 # The last good copy is kept on disk so the first page load after a deploy
 # renders it at once, marked stale, and refreshes behind the response.
-_MINERS_DISK = DATA / 'explorer_miners.json'
+_MINERS_DISK = DATA / f'explorer_miners.{netcfg.NETWORK}.json'
 try:
     _miners_cache.update(ts=_MINERS_DISK.stat().st_mtime,
                          data=json.loads(_MINERS_DISK.read_text(encoding='utf-8')))
@@ -1744,7 +1744,7 @@ _LLMS_TXT = f'''# Flop Scout
 > Web search, page reading and FLOP network data for AI agents, priced per call in FLOP.
 > Also a live ranking of FLOP inference miners by on-chain settlement rate, with alerts.
 
-Runs on the FLOP devnet. Charges are nominal: computed, shown and logged, never debited.
+Runs on the FLOP {netcfg.LABEL}. Charges are nominal: computed, shown and logged, never debited.
 Scout's own fee and the miner's inference cost are always reported as two separate numbers.
 
 ## API

@@ -7,6 +7,7 @@ Design principles:
   - Multiple web routes = smart router can pick fastest/best available.
   - Adding a source = one function + one entry here. UI picks it up automatically.
 """
+import netcfg
 import src_web as w
 import src_explorer as ex
 
@@ -88,7 +89,7 @@ SOURCES = {
         'label': 'FLOP miner performance',
         'group': 'FLOP',
         'fn': w.flop_miners_live,
-        'hint': 'GPU, stake, settlement rate per miner · devnet explorer',
+        'hint': f'GPU, stake, settlement rate per miner · {netcfg.LABEL} explorer',
     },
     'flop_stats': {
         'label': 'FLOP network stats',

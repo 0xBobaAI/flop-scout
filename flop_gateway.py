@@ -14,7 +14,7 @@ import asyncio
 import os
 import time
 
-FLOP_URL = os.getenv('FLOP_BASE_URL', 'https://api.flop.network/v1').rstrip('/')
+from netcfg import GATEWAY_URL as FLOP_URL, NETWORK
 
 TTL = 60.0        # a snapshot this fresh is served without touching the network
 # Measured on this devnet: the same GET took 0.8s, 3.7s and >12s on successive
@@ -32,7 +32,7 @@ _refreshing = False
 # The last good payload is kept on disk so a restart does not begin with
 # nothing: measured on the VPS, the first /api/miners after a deploy waited
 # 32 s on a cold gateway call. It is the public model catalog, nothing secret.
-_DISK = os.path.join(os.getenv('DATA_DIR') or os.path.dirname(os.path.abspath(__file__)), 'gateway_models.json')
+_DISK = os.path.join(os.getenv('DATA_DIR') or os.path.dirname(os.path.abspath(__file__)), f'gateway_models.{NETWORK}.json')
 
 
 def _load_disk() -> None:

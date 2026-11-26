@@ -37,6 +37,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 import flop_gateway
 import llm
 import members
+import netcfg
 import src_router as router
 
 PREFIXES = ('flop:', 'openrouter:')
@@ -100,11 +101,11 @@ def _explain_auth(out: dict, status: int, provider: str, paid_by: str) -> tuple[
     if paid_by == 'scout':
         err['code'] = 'scout_key_unavailable'
         err['type'] = 'server_error'
-        err['message'] = ("Scout's own FLOP devnet key has expired, so the free tier cannot run right now. "
-                          'Use your own FLOP key (flopscout.com > wallet > Fund & enroll key) as the API key.')
+        err['message'] = (f"Scout has no working FLOP {netcfg.LABEL} key right now, so the free tier cannot run. "
+                          'Pass your own FLOP key as the API key.')
         return out, 503
     err['message'] = ('The FLOP gateway rejected this key: it is wrong or expired (wallet keys last at most 24h). '
-                      'Re-enroll at flopscout.com > wallet, or check it with GET https://api.flop.network/v1/keys/me.')
+                      f'Check it with GET {llm.FLOP_URL}/keys/me (keys are per network: this is {netcfg.LABEL}).')
     return out, status
 
 

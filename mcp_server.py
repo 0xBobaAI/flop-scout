@@ -27,7 +27,7 @@ SUPPORTED = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']
 
 INSTRUCTIONS = (
     'Flop Scout sells web search, page reading and FLOP network data to agents, priced per call in FLOP, '
-    'and ranks FLOP inference miners by on-chain settlement rate. Charges are nominal on devnet: '
+    'and ranks FLOP inference miners by on-chain settlement rate. Charges are nominal: '
     'computed and reported, never debited. Scout\'s fee and the miner\'s inference cost are always two '
     'separate numbers. To get a page\'s text, use scout_read; to answer a question from several '
     'sources, use scout_answer, and price it first with scout_quote.')
@@ -66,8 +66,8 @@ TOOLS = [
                      "receipt, inference_estimate) and quota. If no source returns results, no inference runs and "
                      "answers[] is empty. A URL in q is read by the page source, which auto adds; for one page's "
                      "text without a model use scout_read. Inference uses "
-                     "keys.flop or keys.openrouter when given, else Scout's own FLOP key, which can be unavailable "
-                     "on devnet. Each call counts against the rate limit unless no answer is produced; the same "
+                     "keys.flop or keys.openrouter when given, else Scout's own FLOP key, which can be unavailable."
+                     " Each call counts against the rate limit unless no answer is produced; the same "
                      "request from the same caller within 10 minutes returns the cached answer free."),
      'inputSchema': {'type': 'object', 'required': ['q'], 'properties': {
          'q': {'type': 'string', 'minLength': 2, 'maxLength': 500, 'description': 'The question.'},
@@ -114,7 +114,7 @@ TOOLS = [
      'title': 'Scout service price list',
      'description': ("Return Scout's static price list in FLOP: answer_fee, compare_fee and services[] (id, "
                      "price_flop, unit, free, available). metering \"nominal\" means prices are computed and "
-                     "reported but never debited (devnet). This is Scout's fee only: for the total of one request "
+                     "reported but never debited. This is Scout's fee only: for the total of one request "
                      "use scout_quote, for the miner's inference cost use flop_inference_prices."),
      'inputSchema': {'type': 'object', 'properties': {}},
      'annotations': {'readOnlyHint': True, 'idempotentHint': True, 'openWorldHint': False}},

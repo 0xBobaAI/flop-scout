@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import flop_gateway
+import netcfg
 from flop_gateway import FLOP_URL
 
 BASE = Path(__file__).parent
@@ -39,6 +40,10 @@ def flop_key() -> str:
                               model=data.get('key_model') or '')
         except Exception:
             _key_cache.update(mtime=None, value='', expires=0, model='')
+    if netcfg.NETWORK != 'devnet':
+        # .wallet.json and FLOP_API_KEY hold devnet keys. Testnet keys are
+        # issued by FLOP Labs only and are configured separately.
+        return os.getenv('FLOP_TESTNET_API_KEY', '').strip()
     if _key_cache['value'] and _key_cache['expires'] > time.time() * 1000:
         return _key_cache['value']
     return os.getenv('FLOP_API_KEY', '').strip() or _key_cache['value']
@@ -51,7 +56,7 @@ def flop_key_model() -> str:
     other model with that key is a guaranteed 401 model_not_allowed.
     """
     flop_key()  # refresh the cache from .wallet.json
-    if _key_cache['value'] and _key_cache['expires'] > time.time() * 1000:
+    if netcfg.NETWORK == 'devnet' and _key_cache['value'] and _key_cache['expires'] > time.time() * 1000:
         return _key_cache['model']
     return ''
 
@@ -69,7 +74,7 @@ DEFAULT_FLOP_MODEL = 'qwen/qwen2.5-0.5b-instruct'
 def fallback_models():
     m = default_flop_model()
     return [{'id': f'flop:{m}', 'provider': 'flop', 'model': m,
-             'label': f'{m.split("/")[-1]} (devnet)', 'price': 'live price unavailable',
+             'label': f'{m.split("/")[-1]} ({netcfg.LABEL})', 'price': 'live price unavailable',
              'capacity_tpm': None, 'miners': 0, 'blocked': False}]
 
 # Curated OpenRouter models shown in the picker (user brings own key).

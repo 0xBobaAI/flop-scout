@@ -25,7 +25,7 @@ Endpoints used (all public, CORS *):
 import re
 import time
 
-from netcfg import EXPLORER
+from netcfg import EXPLORER, LABEL
 API = f'{EXPLORER}/api'
 
 _FLOP = 1e18
@@ -107,7 +107,7 @@ async def explorer_overview(c, q, n, keys):
     fin = j.get('finality', {})
     now = time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())
     result = [{
-        'title': 'FLOP devnet: live network overview',
+        'title': f'FLOP {LABEL}: live network overview',
         'url': EXPLORER,
         'snippet': (
             f"Block {j.get('latestBlockNumber', 0):,} · "
@@ -119,7 +119,7 @@ async def explorer_overview(c, q, n, keys):
             f"total transactions: {j.get('totalTransactions', 0):,}"
         )
     }, {
-        'title': 'FLOP devnet: participants snapshot',
+        'title': f'FLOP {LABEL}: participants snapshot',
         'url': f'{EXPLORER}/miners',
         'snippet': (
             f"Registered miners: {j.get('registeredMiners', 0)} · "
@@ -213,7 +213,7 @@ async def explorer_spend(c, q, n, keys):
     spenders = j.get('topSpenders', [])[:n]
     now = time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())
     out = [{
-        'title': 'FLOP devnet: inference spend summary',
+        'title': f'FLOP {LABEL}: inference spend summary',
         'url': EXPLORER,
         'snippet': (
             f"Total spent: {_flop(j.get('totalSpentRaw', 0))} · "
@@ -341,7 +341,7 @@ async def explorer_capacity(c, q, n, keys):
     now = time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())
     gpu_lines = [f"{s['sku']} ×{s['count']}" for s in skus[:n]]
     return _s('capacity', [{
-        'title': 'FLOP devnet: total GPU mining capacity',
+        'title': f'FLOP {LABEL}: total GPU mining capacity',
         'url': EXPLORER,
         'snippet': f"GPUs: {'; '.join(gpu_lines)} · source block {cur.get('sourceBlock', '?')} · {now}"
     }])
@@ -381,7 +381,7 @@ async def explorer_rewards(c, q, n, keys):
         return []
     j = r.json()
     return [{
-        'title': 'FLOP devnet: rewards summary',
+        'title': f'FLOP {LABEL}: rewards summary',
         'url': EXPLORER,
         'snippet': (
             f"Total distributed: {_flop(j.get('totalDistributed', 0))} · "
@@ -402,7 +402,7 @@ async def explorer_staking(c, q, n, keys):
     j = r.json()
     vals = j.get('validators', {})
     return [{
-        'title': 'FLOP devnet: staking stats',
+        'title': f'FLOP {LABEL}: staking stats',
         'url': EXPLORER,
         'snippet': (
             f"Total staked: {_flop(j.get('totalStaked', 0))} · "

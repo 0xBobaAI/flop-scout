@@ -16,6 +16,7 @@ import httpx
 SCOUT = os.getenv('SCOUT_URL', '').rstrip('/')
 from netcfg import EXPLORER_API as EXPLORER
 from netcfg import EXPLORER as EXPLORER_SITE
+from netcfg import LABEL, GATEWAY_URL, NETWORK, FAUCET_URL, TESTNET_FAUCET_URL
 UA = {'User-Agent': 'flop-scout/0.5'}
 _tag = re.compile(r'<[^>]+>')
 
@@ -336,9 +337,9 @@ async def flop_live(c, q, n, keys):
     # Cached, parallel, and failure-tolerant: a dead faucet must not cost the
     # whole source its answer.
     mods, health, faucet = await asyncio.gather(
-        _cached(c, 'gw_models', 'https://api.flop.network/v1/models', timeout=10),
+        _cached(c, 'gw_models', f'{GATEWAY_URL}/models', timeout=10),
         _cached(c, 'ex_health', f'{EXPLORER}/health', timeout=6),
-        _cached(c, 'faucet', 'https://faucet.devnet.flop.network/limits', ttl=600, timeout=6),
+        _cached(c, 'faucet', f'{TESTNET_FAUCET_URL if NETWORK == "testnet" else FAUCET_URL}/limits', ttl=600, timeout=6),
     )
     if mods:
         for x in mods.get('data', []):
@@ -347,7 +348,7 @@ async def flop_live(c, q, n, keys):
             countries = ', '.join({d['country_code'] for d in xf.get('datacenters', [])})
             out.append({
                 'title': f"FLOP inference: {x.get('name') or x['id']}",
-                'url': 'https://api.flop.network/v1/models',
+                'url': f'{GATEWAY_URL}/models',
                 'snippet': (f"Model {x['id']} · price {x['pricing']['prompt']} FLOP/token (devnet-nominal) · "
                             f"capacity {(xf.get('capacity_tpm') or 0):,} tok/min · {len(ps)} priced miners · "
                             f"countries: {countries} · as of {now}")
@@ -356,7 +357,7 @@ async def flop_live(c, q, n, keys):
     if health:
         j = health
         out.append({
-            'title': 'FLOP devnet: chain health',
+            'title': f'FLOP {LABEL}: chain health',
             'url': EXPLORER_SITE,
             'snippet': (f"Status {j.get('status')}, phase {j.get('phase')}, "
                         f"block {j.get('indexedHead')}, finality lag {j.get('headLag')} blocks · {now}")
@@ -367,8 +368,8 @@ async def flop_live(c, q, n, keys):
         fc, sp = j.get('faucet', {}), j.get('sponsor', {})
         dc = fc.get('dailyCap', {})
         out.append({
-            'title': 'FLOP devnet: faucet & sponsorship limits',
-            'url': 'https://faucet.devnet.flop.network/limits',
+            'title': f'FLOP {LABEL}: faucet & sponsorship limits',
+            'url': f'{TESTNET_FAUCET_URL if NETWORK == "testnet" else FAUCET_URL}/limits',
             'snippet': (f"Faucet {fc.get('status')} · daily cap {dc.get('limitFlop')} FLOP, "
                         f"used {dc.get('usedFlop')}, remaining {dc.get('remainingFlop')} · "
                         f"miner sponsorship: {sp.get('miner', {}).get('status')} · "
@@ -385,7 +386,7 @@ async def flop_miners_live(c, q, n, keys):
 
     # Fetch top priced miners from gateway (cached — the flop preset asks for
     # this at the same time as flop_live, and both used to fetch the same URL)
-    mods = await _cached(c, 'gw_models', 'https://api.flop.network/v1/models', timeout=15)
+    mods = await _cached(c, 'gw_models', f'{GATEWAY_URL}/models', timeout=15)
     if not mods:
         return []
     priced = []
@@ -439,7 +440,7 @@ async def flop_network_stats(c, q, n, keys):
     now = time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())
     n = lambda v: f'{v:,}' if isinstance(v, (int, float)) else 'n/a'
     return [{
-        'title': 'FLOP devnet: network statistics',
+        'title': f'FLOP {LABEL}: network statistics',
         'url': EXPLORER_SITE,
         'snippet': (f"Block {n(j.get('latestBlockNumber'))} · TPS {j.get('tps')} · "
                     f"registered miners: {j.get('registeredMiners')} · "

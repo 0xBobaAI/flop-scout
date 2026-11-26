@@ -114,7 +114,7 @@ async function network() {
       ? 'prices unavailable'
       : `${r?.active_priced ?? '—'} active miners`;
     $('netNote').textContent =
-      `${ok ? 'live' : 'degraded'} · ${(m.data || []).length} models · ${tpm.toLocaleString('en')} tok/min · ${minerTxt}${best} · devnet activity earns nothing`;
+      `${ok ? 'live' : 'degraded'} · ${(m.data || []).length} models · ${tpm.toLocaleString('en')} tok/min · ${minerTxt}${best} · ${window.FLOP_NETWORK === 'testnet' ? 'unscored Testnet phase' : 'devnet activity earns nothing'}`;
   } catch {
     $('netNote').textContent = 'status unavailable';
   }
@@ -133,7 +133,7 @@ async function previewQuote(silent) {
     LAST_QUOTE = q;
     const billed = q.items.filter(i => i.price_flop > 0).length;
     const total = q.cache_hit ? '0' : q.total_flop.toFixed(3);
-    const label = `${total} FLOP quoted · ${billed} billed line${billed === 1 ? '' : 's'}${q.metering === 'nominal' ? ' · not charged on devnet' : ''}`;
+    const label = `${total} FLOP quoted · ${billed} billed line${billed === 1 ? '' : 's'}${q.metering === 'nominal' ? ' · not charged (nominal)' : ''}`;
     if (!silent) toast(label, 4600);
     if ($('quoteChip')) {
       $('quoteChip').textContent = `≈ ${total} FLOP`;
@@ -165,7 +165,7 @@ function answerCard(a) {
   // Two numbers, never mixed: the miner's own cost above, Scout's fee here.
   const quoted = a.scout_quote_flop;
   const fee = quoted != null
-    ? `<div class="answer-fee"><span class="mono">${quoted} FLOP</span> quoted to Scout for search, routing and citations${a.metering === 'nominal' ? ' · <em>not charged on devnet</em>' : ''}</div>`
+    ? `<div class="answer-fee"><span class="mono">${quoted} FLOP</span> quoted to Scout for search, routing and citations${a.metering === 'nominal' ? ' · <em>not charged (nominal)</em>' : ''}</div>`
     : '';
 
   return `<article class="card answer">
@@ -190,7 +190,7 @@ function priceLine(p) {
   ).join('');
   const total = p.cache_hit
     ? 'cached — 0 FLOP'
-    : `${p.total_flop.toFixed(3)} FLOP${p.metering === 'nominal' ? ' <em>(not charged on devnet)</em>' : ''}`;
+    : `${p.total_flop.toFixed(3)} FLOP${p.metering === 'nominal' ? ' <em>(not charged, nominal)</em>' : ''}`;
   return `<details class="pricebox"${p.cache_hit ? '' : ' open'}><summary><span class="mono">${total}</span> · this answer's Scout fee</summary><ul>${rows}</ul></details>`;
 }
 
@@ -210,7 +210,7 @@ async function ask(e) {
     <div class="skeleton"></div><div class="skeleton" style="margin-top:10px;height:80px"></div>`;
   const tick = setInterval(() => {
     const p = $('prog');
-    if (p) p.textContent = `Computing on FLOP… ${Math.round((Date.now() - t0) / 1000)}s · devnet can take up to 3 min`;
+    if (p) p.textContent = `Computing on FLOP… ${Math.round((Date.now() - t0) / 1000)}s · can take up to 3 min`;
   }, 1500);
 
   try {
