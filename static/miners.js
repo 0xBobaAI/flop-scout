@@ -5,9 +5,10 @@ document.documentElement.classList.add('js-tips');
 const fmtTpm = t => t == null ? '—' : t >= 1e6 ? (t / 1e6).toFixed(1) + 'M' : t >= 1e3 ? (t / 1e3).toFixed(0) + 'k' : String(t);
 const fmtNum = v => v == null ? '—' : v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(1) + 'k' : String(Math.round(v));
 const pct = (v, d = 0) => v == null ? '—' : (v * 100).toFixed(d) + '%';
-const FLAG = cc => cc ? String.fromCodePoint(...[...cc.toUpperCase()].map(c => 0x1F1E6 + c.charCodeAt(0) - 65)) : '';
+const FLAG = cc => cc && cc !== 'ZZ' ? String.fromCodePoint(...[...cc.toUpperCase()].map(c => 0x1F1E6 + c.charCodeAt(0) - 65)) : '';
 const COUNTRY = (() => { try { return new Intl.DisplayNames(['en'], { type: 'region' }); } catch { return null; } })();
-const cname = cc => (COUNTRY && cc ? COUNTRY.of(cc) : cc) || cc;
+// ZZ = the gateway does not disclose the datacenter country.
+const cname = cc => cc === 'ZZ' ? 'Undisclosed' : ((COUNTRY && cc ? COUNTRY.of(cc) : cc) || cc);
 
 let DATA = null;
 let ROUTER = {};            // address -> router row
@@ -99,7 +100,7 @@ function changeCell(m) {
 }
 
 function regionCell(m) {
-  if (m.country) return `<span class="cc" title="${esc(cname(m.country))}">${esc(m.country)}</span>`;
+  if (m.country) return `<span class="cc" title="${esc(cname(m.country))}">${esc(m.country === 'ZZ' ? '—' : m.country)}</span>`;
   const c = m.country_candidates || [];
   if (c.length && c.length <= 3) return `<span class="c-muted" title="One of: ${esc(c.map(cname).join(', '))}">${c.map(esc).join(' / ')}</span>`;
   if (c.length) return `<span class="c-muted" title="One of ${c.length} countries: ${esc(c.map(cname).join(', '))}">—</span>`;
@@ -285,9 +286,11 @@ function buildFilters() {
 /* ---- network status ---- */
 async function renderNet() {
   try {
-    const h = await fetch('https://api.flop.network/health').then(r => r.json());
+    const api = window.FLOP_API || 'https://gateway.testnet.flop.network';
+    const h = await fetch(api + '/health').then(r => r.json());
     $('netDot').classList.toggle('ok', h.status === 'ok');
-    $('netName').textContent = `FLOP ${h.network?.network || ''} · ${h.status === 'ok' ? 'live' : 'degraded'}`;
+    const n = h.network?.network || window.FLOP_NETWORK || '';
+    $('netName').textContent = `FLOP ${n === 'testnet' ? 'Testnet (unscored)' : n} · ${h.status === 'ok' ? 'live' : 'degraded'}`;
   } catch { $('netName').textContent = 'FLOP network · status unavailable'; }
 }
 
