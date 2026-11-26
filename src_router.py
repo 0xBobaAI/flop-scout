@@ -105,7 +105,10 @@ class MinerScore:
             cs = (self.chain_settled + PRIOR_RATE * PRIOR_WEIGHT) / (self.chain_total + PRIOR_WEIGHT)
             self.settle_basis = 'lifetime'
         else:
-            cs = 0.5  # unknown → neutral
+            # No sessions yet: the network rate, i.e. the same smoothing with
+            # n = 0. A fixed 0.5 put every untested miner above proven ones
+            # whenever the network settled below 50% (Testnet opening: 24%).
+            cs = PRIOR_RATE
             self.settle_basis = 'unknown'
         # 2. Local signal
         lr = self.local_rate

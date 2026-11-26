@@ -161,7 +161,8 @@ def _feed_router() -> None:
     """Give the router each miner's independent-demand settlement over 7 days."""
     router.INDEPENDENT = sessions.independent_counts(db, db_lock, 7 * 86400)
     net = sessions.network(db, db_lock, 7 * 86400, buckets=1)
-    if net['independent_settle_rate'] is not None and net['independent_sessions'] >= 100:
+    # 30 sessions is enough for a network-wide prior; Testnet opened with ~140.
+    if net['independent_settle_rate'] is not None and net['independent_sessions'] >= 30:
         router.PRIOR_RATE = net['independent_settle_rate']
 
 
