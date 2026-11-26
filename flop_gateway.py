@@ -24,6 +24,7 @@ TTL = 60.0        # a snapshot this fresh is served without touching the network
 TIMEOUT = 20.0
 ATTEMPTS = 2
 MIN_RETRY = 15.0  # a failing gateway is not retried on every request
+EMPTY_GRACE = 900.0  # an empty catalog is believed only after 15 min of them
 
 _state = {'ts': 0.0, 'data': None, 'err_ts': 0.0}
 _lock = None
@@ -135,6 +136,14 @@ async def snapshot(client, force: bool = False, timeout: float = TIMEOUT, wait: 
                 payload = r.json()
                 if not isinstance(payload, dict):
                     raise ValueError(f'unexpected /models payload: {type(payload).__name__}')
+                # Measured on the Testnet gateway: /models intermittently
+                # answers 200 with an empty list while 25+ miners are priced.
+                # An empty catalog never replaces a non-empty one; it is
+                # treated as a failed read until it persists for EMPTY_GRACE.
+                prev = _state['data'] or {}
+                if (not payload.get('data') and prev.get('data')
+                        and time.time() - _state['ts'] < EMPTY_GRACE):
+                    raise ValueError('empty /models payload')
                 _state.update(ts=time.time(), data=payload, err_ts=0.0)
                 _save_disk(payload)
                 return _state['data']
